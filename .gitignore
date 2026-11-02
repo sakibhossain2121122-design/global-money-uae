@@ -33,3 +33,6 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Keep the verified Gradle Wrapper versioned, including under android/.
+!**/gradle/wrapper/gradle-wrapper.jar
