@@ -1,0 +1,4 @@
+# Preserve the official wrapper bytes on every platform.
+android/gradlew text eol=lf
+android/gradlew.bat text eol=lf
+android/gradle/wrapper/gradle-wrapper.jar binary
