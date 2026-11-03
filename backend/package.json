@@ -1,0 +1,23 @@
+{
+  "name": "global-money-api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.ts",
+    "migrate": "node src/migrate.ts",
+    "test": "node test/security.test.ts",
+    "typecheck": "tsc --noEmit",
+    "test:integration": "node test/integration.test.ts"
+  },
+  "dependencies": {
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
+}

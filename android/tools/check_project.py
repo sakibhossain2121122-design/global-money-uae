@@ -12,8 +12,7 @@ required = [
     'build.gradle.kts', 'gradle.properties', 'app/build.gradle.kts',
     'app/src/main/AndroidManifest.xml',
     'app/src/main/java/com/globalmoney/uae/demo/MainActivity.kt',
-    'app/src/main/java/com/globalmoney/uae/demo/DemoMoney.kt',
-    'app/src/test/java/com/globalmoney/uae/demo/DemoMoneyTest.kt',
+    'app/src/main/java/com/globalmoney/uae/demo/AccountApi.kt',
 ]
 for name in required:
     path = root / name
@@ -39,10 +38,15 @@ for kotlin in (root / 'app/src/main/java').rglob('*.kt'):
     for key in re.findall(r'R\.string\.(\w+)', kotlin.read_text()):
         assert key in en, f'Missing string: {key}'
 manifest = ET.parse(root / 'app/src/main/AndroidManifest.xml').getroot()
-assert not manifest.findall('uses-permission'), 'Demo must not request permissions'
+assert [p.attrib['{http://schemas.android.com/apk/res/android}name'] for p in manifest.findall('uses-permission')] == ['android.permission.INTERNET']
 ns = '{http://schemas.android.com/apk/res/android}'
 application = manifest.find('application')
 assert application.attrib[ns + 'allowBackup'] == 'false'
+assert application.attrib[ns + 'usesCleartextTraffic'] == 'false'
+ui = (root / 'app/src/main/java/com/globalmoney/uae/demo/MainActivity.kt').read_text()
+assert 'DEMO' not in ui and '2,450' not in ui and 'sampleTransactions' not in ui
+assert 'Service not yet available.' in ui and '—' in ui
+assert 'বাংলা' in ui
 assert application.find('activity').attrib[ns + 'exported'] == 'true'
 jar = root / 'gradle/wrapper/gradle-wrapper.jar'
 assert hashlib.sha256(jar.read_bytes()).hexdigest() == '498495120a03b9a6ab5d155f5de3c8f0d986a449153702fb80fc80e134484f17'

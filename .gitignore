@@ -36,3 +36,10 @@ google-services.json
 
 # Keep the verified Gradle Wrapper versioned, including under android/.
 !**/gradle/wrapper/gradle-wrapper.jar
+
+# Server and admin local files
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
