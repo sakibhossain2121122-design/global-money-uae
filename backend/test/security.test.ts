@@ -1,0 +1,10 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {hashPassword,verifyPassword,password,email,beneficiary,balanced,financialPosting,Limiter,digest,token} from '../src/security.ts';
+test('salted password hashes and verification',async()=>{const a=await hashPassword('long password 123');const b=await hashPassword('long password 123');assert.notEqual(a,b);assert(await verifyPassword('long password 123',a));assert(!await verifyPassword('wrong',a));});
+test('validation rejects weak credentials and invalid providers',()=>{assert.throws(()=>password('short'));assert.throws(()=>email('bad'));assert.equal(email(' X@EXAMPLE.COM '),'x@example.com');assert.throws(()=>beneficiary({provider:'Other'}));assert.throws(()=>beneficiary({provider:'Bank',name:'Ali',account:'123456'}));});
+test('all five beneficiary providers supported',()=>{for(const provider of ['bKash','Nagad','Rocket','Upay','Bank'])assert.equal(beneficiary({provider,name:'Ali',account:'01712345678',bank:'Bank name'}).provider,provider);});
+test('ledger requires balanced nonzero entries in each currency',()=>{assert(balanced([{currency:'AED',amount:100n},{currency:'AED',amount:-100n}]));assert(!balanced([{currency:'AED',amount:100n},{currency:'BDT',amount:-100n}]));assert(!balanced([]));assert(!balanced([{currency:'AED',amount:0n},{currency:'AED',amount:0n}]));});
+test('posting always fails closed',()=>assert.throws(financialPosting,/Service not yet available/));
+test('rate limits expire',()=>{const l=new Limiter(2,10);assert(l.allow('a',0));assert(l.allow('a',1));assert(!l.allow('a',2));assert(l.allow('a',10));});
+test('session token entropy and digest',()=>{const a=token();assert.equal(a.length,43);assert.notEqual(a,token());assert.equal(digest(a).length,64);assert.notEqual(a,digest(a));});
