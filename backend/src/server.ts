@@ -90,5 +90,5 @@ const server = createServer(async (req,res) => {
  } finally {c.release();}
 });
 server.requestTimeout=15000;server.headersTimeout=10000;
-server.listen(Number(process.env.PORT ?? 3000),'127.0.0.1');
+server.listen(Number(process.env.PORT ?? 3000),'0.0.0.0');
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>server.close(()=>{void pool.end();}));
