@@ -74,8 +74,20 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
         busy = true; notice = ""
         run(work) { result ->
             busy = false
-            result.onSuccess(done).onFailure {
-                notice = t("Unable to complete request. Check your connection and sign in again if needed.", "অনুরোধ সম্পন্ন হয়নি। সংযোগ পরীক্ষা করুন এবং প্রয়োজনে আবার লগইন করুন।")
+            result.onSuccess(done).onFailure { error ->
+                notice = when (error) {
+                    is AccountFailure.NotConfigured -> t("Account service not configured.", "অ্যাকাউন্ট সেবা কনফিগার করা নেই।")
+                    is AccountFailure.Network -> t("Cannot connect to the account service. Check internet or try later.", "অ্যাকাউন্ট সার্ভারে সংযোগ হচ্ছে না। ইন্টারনেট পরীক্ষা করে আবার চেষ্টা করুন।")
+                    is AccountFailure.Session -> t("Session expired. Please sign in again.", "সেশনের মেয়াদ শেষ। আবার লগইন করুন।")
+                    is AccountFailure.Unavailable -> t("Account service temporarily unavailable.", "অ্যাকাউন্ট সেবা সাময়িক অনুপলব্ধ।")
+                    is AccountFailure.Rejected -> when (error.status) {
+                        400 -> t("Check your registration details and password.", "নিবন্ধনের তথ্য ও পাসওয়ার্ড পরীক্ষা করুন।")
+                        409 -> t("Account request could not be accepted.", "অ্যাকাউন্টের অনুরোধ গ্রহণ করা যায়নি।")
+                        429 -> t("Too many attempts. Try again later.", "অনেকবার চেষ্টা হয়েছে। পরে আবার চেষ্টা করুন।")
+                        else -> t("Request rejected. Please check your details.", "অনুরোধ গ্রহণ করা হয়নি। তথ্য পরীক্ষা করুন।")
+                    }
+                    else -> t("Unable to complete request.", "অনুরোধ সম্পন্ন হয়নি।")
+                }
                 if (api.token == null && signedIn) { signedIn = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = "" }
             }
         }
@@ -97,6 +109,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                         if (register) Field(name, { name = it }, t("Full name", "পুরো নাম"))
                         OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                        if (password.isNotEmpty() && password.length < 12) {
+                            Text(t("Enter at least 12 characters to continue.", "এগোতে কমপক্ষে ১২ অক্ষরের পাসওয়ার্ড লিখুন।"), color = MaterialTheme.colorScheme.error)
+                        }
                         Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || name.isNotBlank()), onClick = {
                             val payload = JSONObject().put("email", email).put("password", password).put("name", name)
                             val creating = register
