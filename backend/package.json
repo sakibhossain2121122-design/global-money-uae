@@ -2,7 +2,7 @@
   "name": "global-money-api",
   "private": true,
   "type": "module",
-  "scripts": {
+  ""scripts": {
   "start": "node src/server.ts",
   "migrate": "node src/migrate.ts",
   "bootstrap-admin": "node src/bootstrap-admin.ts",
