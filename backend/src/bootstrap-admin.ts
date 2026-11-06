@@ -14,9 +14,10 @@ async function main() {
     throw new Error('Required admin configuration is missing');
   }
 
-  if (password.length < 12 || password.length > 128) {
-    throw new Error('Admin password must be 12–128 characters');
+  if (password.length < 8 || password.length > 128) {
+  throw new Error('Admin password must be 8-128 characters');
   }
+  
 
   const pool = new Pool({
   connectionString: url,
