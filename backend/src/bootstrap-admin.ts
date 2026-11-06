@@ -18,7 +18,12 @@ async function main() {
     throw new Error('Admin password must be 12–128 characters');
   }
 
-  const pool = new Pool({ connectionString: url });
+  const pool = new Pool({
+  connectionString: url,
+  ssl: {
+    rejectUnauthorized: true,
+  },
+});
   const client = await pool.connect();
 
   try {
