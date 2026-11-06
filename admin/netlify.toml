@@ -1,0 +1,11 @@
+[[redirects]]
+  from = "/v1/*"
+  to = "https://your-live-backend-api.com"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+  
