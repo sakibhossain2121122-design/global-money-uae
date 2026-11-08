@@ -68,16 +68,26 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var subject by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var rows by remember { mutableStateOf(JSONArray()) }
+    var paymentMethods by remember { mutableStateOf<List<PaymentMethod>>(emptyList()) }
+    var methodsLoaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     fun call(work: () -> String, done: (String) -> Unit = {}) {
         busy = true; notice = ""
         run(work) { result ->
             busy = false
-            result.onSuccess(done).onFailure {
+            result.mapCatching { done(it) }.onFailure {
                 notice = t("Unable to complete request. Check your connection and sign in again if needed.", "অনুরোধ সম্পন্ন হয়নি। সংযোগ পরীক্ষা করুন এবং প্রয়োজনে আবার লগইন করুন।")
-                if (api.token == null && signedIn) { signedIn = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = "" }
+                if (api.token == null && signedIn) { signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = "" }
             }
+        }
+    }
+    fun loadPaymentMethods() {
+        // Clear prior results before each read, including retries, so errors never show stale metadata.
+        page = "PaymentMethods"; paymentMethods = emptyList(); methodsLoaded = false
+        call({ api.paymentMethods() }) { response ->
+            paymentMethods = PaymentMethods.parse(response)
+            methodsLoaded = true
         }
     }
     MaterialTheme(colorScheme = Palette) {
@@ -113,7 +123,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
                             TextButton(enabled = !busy, onClick = {
                                 call({ api.request("auth/logout", "POST", JSONObject()) }) {
-                                    api.token = null; signedIn = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
+                                    api.token = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
                                 }
                             }) { Text(t("Logout", "লগআউট")) }
                         }
@@ -129,10 +139,31 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 listOf("Add Money" to "অর্থ যোগ করুন", "BOTIM MONEY" to "BOTIM MONEY", "Send money" to "অর্থ পাঠান").forEach { (en,bengali) ->
                                     OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(t(en,bengali)) }
                                 }
+                                Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
                                 Button(enabled = !busy, onClick = { call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Beneficiaries", "প্রাপক")) }
                                 Button(enabled = !busy, onClick = { call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
                                 Button(enabled = !busy, onClick = { call({ api.request("support") }) { rows = JSONArray(it); page = "Support" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Support", "সহায়তা")) }
                                 Text(t("Identity verification is not available. Do not submit identity documents.", "পরিচয় যাচাই চালু হয়নি। পরিচয়পত্র জমা দেবেন না।"))
+                            }
+                            "PaymentMethods" -> {
+                                Text(t("Payment Methods", "পেমেন্ট পদ্ধতি"), style = MaterialTheme.typography.titleLarge)
+                                Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
+                                if (methodsLoaded && paymentMethods.isEmpty()) Text(t("No payment methods available.", "কোনো পেমেন্ট পদ্ধতি পাওয়া যায়নি।"))
+                                if (!busy && !methodsLoaded) Text(t("Payment methods could not be loaded.", "পেমেন্ট পদ্ধতি লোড হয়নি।"))
+                                OutlinedButton(enabled = !busy, onClick = { loadPaymentMethods() }) { Text(t("Refresh", "আবার লোড করুন")) }
+                                paymentMethods.forEach { method ->
+                                    Card(Modifier.fillMaxWidth()) {
+                                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(method.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                            Text(t("Country", "দেশ") + ": " + method.country)
+                                            Text(t("Currency", "মুদ্রা") + ": " + method.currency)
+                                            method.logoUrl?.let { logo -> Text(t("Logo URL", "লোগোর ঠিকানা") + ": " + logo, style = MaterialTheme.typography.bodySmall) }
+                                            OutlinedButton(enabled = method.enabled, onClick = {}, modifier = Modifier.fillMaxWidth()) {
+                                                Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             "Profile" -> {
                                 Field(name, { name = it }, t("Full name", "পুরো নাম"))
