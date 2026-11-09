@@ -28,6 +28,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Validate Gradle Wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
       - name: Build APK and run tests
         env:
           API_BASE_URL: ${{ vars.API_BASE_URL }}
@@ -42,11 +48,3 @@ jobs:
           path: android/app/build/outputs/apk/debug/*.apk
           retention-days: 3
           if-no-files-found: error
-          
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Validate Gradle Wrapper
-        uses: gradle/actions/wrapper-validation@v4
-
-      
