@@ -58,6 +58,7 @@ if (!baseUrl.startsWith("https://")) {
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.outputStream.use { it.write(data.toString().toByteArray(Charsets.UTF_8)) }
             }
+val status = connection.responseCode
 if (status == 401) {
                 token = null
                 throw AccountFailure.Session()
@@ -82,7 +83,6 @@ if (status == 401) {
             throw AccountFailure.Network()
         } finally {
             connection.disconnect()
-        }            val status = connection.responseCode
 
     }
 }
