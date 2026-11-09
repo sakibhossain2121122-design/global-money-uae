@@ -24,13 +24,6 @@ internal class AccountApi(
 
 
 
-Android মোবাইল থেকে পরবর্তী ধাপ:
-1. GitHub-এর conflict editor-এ এই অংশটি প্রতিস্থাপন করুন।
-2. নিচের @Volatile var token এবং request() ফাংশন অক্ষত রাখুন।
-3. অন্য conflict থাকলে এখনই Mark as resolved চাপবেন না।
-গুরুত্বপূর্ণ: শুধু এই অংশ ঠিক করলেই পুরো ফাইল ঠিক হবে না। আগের সম্পাদনায় AccountApi.kt-এর কিছু কোড মুছে গিয়ে থাকলে সেগুলোও পুনরুদ্ধার করতে হবে।
-
-এখন এই অংশ পেস্ট করার পর AccountApi.kt-এর পরবর্তী অংশের স্ক্রিনশট পাঠান।
     @Volatile var token: String? = null
     fun paymentMethods(): String {
         check(!token.isNullOrBlank()) { "Sign in required" }
