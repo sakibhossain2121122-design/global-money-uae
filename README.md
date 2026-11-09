@@ -25,7 +25,7 @@ node --env-file=.env backend/src/migrate.ts
 node --env-file=.env backend/src/server.ts
 ```
 
-API listens on `127.0.0.1:3000`. In another terminal:
+API listens on `0.0.0.0:3000` (all interfaces, required for Railway healthchecks). In another terminal:
 
 ```sh
 npm --prefix admin ci

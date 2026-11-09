@@ -1,17 +1,55 @@
 import pg from 'pg';
 import { readFile } from 'node:fs/promises';
-if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
-const pool = new pg.Pool({connectionString: process.env.DATABASE_URL});
-const c = await pool.connect();
+
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL required');
+}
+
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL
+});
+
+const migrations = [
+  { version: '001', file: '001_foundation.sql' },
+  { version: '002', file: '002_payment_methods.sql' }
+];
+
+const client = await pool.connect();
+
 try {
- await c.query('BEGIN');
- await c.query('SELECT pg_advisory_xact_lock(42821001)');
- await c.query('CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY)');
- const applied = await c.query("SELECT 1 FROM schema_migrations WHERE version = '001'");
- if (!applied.rowCount) {
-  await c.query(await readFile(new URL('../migrations/001_foundation.sql', import.meta.url), 'utf8'));
-  await c.query("INSERT INTO schema_migrations VALUES ('001')");
- }
- await c.query('COMMIT');
-} catch(e) { await c.query('ROLLBACK'); throw e; }
-finally { c.release(); await pool.end(); }
+  await client.query('BEGIN');
+  await client.query('SELECT pg_advisory_xact_lock(42821001)');
+  await client.query(
+    'CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY)'
+  );
+
+  for (const migration of migrations) {
+    const result = await client.query(
+      'SELECT 1 FROM schema_migrations WHERE version = $1',
+      [migration.version]
+    );
+
+    if (result.rowCount === 0) {
+      const sql = await readFile(
+        new URL('../migrations/' + migration.file, import.meta.url),
+        'utf8'
+      );
+
+      await client.query(sql);
+      await client.query(
+        'INSERT INTO schema_migrations (version) VALUES ($1)',
+        [migration.version]
+      );
+
+      console.log('Applied migration:', migration.version);
+    }
+  }
+
+  await client.query('COMMIT');
+} catch (error) {
+  await client.query('ROLLBACK');
+  throw error;
+} finally {
+  client.release();
+  await pool.end();
+}
