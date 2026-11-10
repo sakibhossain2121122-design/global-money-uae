@@ -39,10 +39,8 @@ jobs:
           API_BASE_URL: ${{ vars.API_BASE_URL }}
         run: |
           chmod +x gradlew
-          ./gradlew --no-daemon-
-          testDebugUnitTest lintDebug assembleDebug "-
-          PAPI_BASE_URL=${API_BASE_URL}"
-  
+          ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug "-PAPI_BASE_URL=${API_BASE_URL}"
+
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
