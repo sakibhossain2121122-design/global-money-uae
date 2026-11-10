@@ -1,4 +1,4 @@
-tname: GLOBAL MONEY UAE Android APK
+name: GLOBAL MONEY UAE Android APK
 
 on:
   workflow_dispatch:
