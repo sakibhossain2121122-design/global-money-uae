@@ -5,7 +5,7 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
-** User-facing errors. Never expose secrets or raw server responses. */
+/** User-facing errors. Never expose secrets or raw server responses. */
 internal sealed class AccountFailure(message: String) : Exception(message) {
     class NotConfigured : AccountFailure("Account service is not configured.")
     class Network : AccountFailure("Cannot connect to the account service.")
