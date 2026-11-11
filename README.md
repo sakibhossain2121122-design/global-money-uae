@@ -10,7 +10,8 @@ Financial services are disabled. No provider integration, partnership, regulator
 - `backend/`: validated APIs, scrypt password hashing, opaque revocable eight-hour sessions, authorization, bounded requests, rate limits, audit logging, migrations and tests.
 - `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rate configuration and read-only transaction review.
 - `docs/deployment.md`: secure setup, roles, service hosting and operational boundaries.
-- `docs/API.md`: request contracts.
+- `docs/API.md`: account API contracts.
+- `docs/add-money-requests.md`: Add Money request, deduplication and admin review contracts.
 - `docs/PR.md`: prepared pull request description targeting `main`.
 - `docs/test-results.md`: executed validation and limitations.
 
