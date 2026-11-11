@@ -63,7 +63,35 @@ const server = createServer(async (req,res) => {
    else if(method==='DELETE' && /^\/v1\/beneficiaries\/[0-9a-f-]{36}$/.test(path)) {await c.query('DELETE FROM beneficiaries WHERE id=$1 AND customer_id=$2',[uuid(path.split('/').pop()),actor]);await audit('beneficiary.delete');result={ok:true};}
    else if(method==='GET' && path==='/v1/support') result=(await c.query('SELECT id,subject,status,created_at FROM support_tickets WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
    else if(method==='POST' && path==='/v1/support') {const b=await body(req);result=(await c.query('INSERT INTO support_tickets(customer_id,subject,message) VALUES($1,$2,$3) RETURNING id',[actor,text(b.subject),text(b.message,1,2000)])).rows[0];await audit('support.create');status=201;}
-   else if(method==='GET' && path==='/v1/admin/users') result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
+   else if (method === 'GET' && path === '/v1/service-requests') {
+  result = (await c.query(
+    `SELECT id, request_type, amount_aed, status,
+            customer_note, admin_note, created_at
+     FROM service_requests
+     WHERE customer_id = $1
+     ORDER BY created_at DESC
+     LIMIT 100`,
+    [actor]
+  )).rows;
+}
+else if (method === 'GET' && path === '/v1/admin/service-requests') {
+  result = (await c.query(
+    `SELECT sr.id, sr.customer_id, c.name,
+            c.email, sr.request_type, sr.amount_aed,
+            sr.status, sr.customer_note, sr.admin_note,
+            sr.created_at
+     FROM service_requests sr
+     JOIN customers c ON c.id = sr.customer_id
+     ORDER BY sr.created_at DESC
+     LIMIT 100`
+  )).rows;
+}
+   
+else if (method === 'GET' && path === '/v1/admin/users') {
+  result = (await c.query(
+    'SELECT id, email, name, status, role FROM customers ORDER BY created_at DESC LIMIT 100'
+  )).rows;
+} 
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/rates') result=(await c.query('SELECT pair,value,updated_at FROM rates')).rows;
