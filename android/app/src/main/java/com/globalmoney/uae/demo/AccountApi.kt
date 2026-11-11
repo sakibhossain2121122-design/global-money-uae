@@ -1,4 +1,3 @@
-
 package com.globalmoney.uae.demo
 
 import org.json.JSONObject
