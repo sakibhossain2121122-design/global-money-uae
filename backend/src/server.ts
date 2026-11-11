@@ -78,11 +78,7 @@ const server = createServer(async (req,res) => {
    } else if(method==='PUT' && path==='/v1/admin/rates') {
     const b=await body(req);const value=text(b.value,1,20);if(!/^\d{1,10}(\.\d{1,6})?$/.test(value)||Number(value)<=0)throw new ApiError(400,'Invalid rate');
     await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
-   } else if (method === 'GET' && path === '/v1/payment-methods') {
-  result = (await c.query(
-    'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods ORDER BY display_order, id'
-  )).rows.map(({ enabled, ...method }) => ({ ...method, enabled: false }));
-} else throw new ApiError(404,'Not found');
+   } else throw new ApiError(404,'Not found');
   }
   await c.query('COMMIT');send(res,status,result);
  } catch(e) {
