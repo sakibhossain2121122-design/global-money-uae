@@ -11,8 +11,10 @@ const pool = new pg.Pool({
 
 const migrations = [
   { version: '001', file: '001_foundation.sql' },
-  { version: '002', file: '002_payment_methods.sql' }
+  { version: '002', file: '002_payment_methods.sql' },
+  { version: '003', file: '003_admin_controls.sql' }
 ];
+
 
 const client = await pool.connect();
 
