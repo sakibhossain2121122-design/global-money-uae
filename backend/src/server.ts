@@ -86,7 +86,75 @@ else if (method === 'GET' && path === '/v1/admin/service-requests') {
      LIMIT 100`
   )).rows;
 }
-   
+else if (
+  method === 'PATCH' &&
+  /^\/v1\/admin\/service-requests\/[0-9a-f-]{36}$/.test(path)
+) {
+  const id = path.split('/').pop()!;
+  const b = await body(req);
+  const nextStatus = b.status;
+  const note = b.admin_note;
+
+  if (!['under_review', 'rejected'].includes(String(nextStatus))) {
+    throw new ApiError(400, 'Invalid request status');
+  }
+
+  if (typeof note !== 'string' || note.trim().length < 3 || note.length > 1000) {
+    throw new ApiError(400, 'Admin note is required');
+  }
+
+  
+const updated = await c.query(
+  `WITH previous AS (
+     SELECT id, status AS previous_status
+     FROM service_requests
+     WHERE id = $4
+       AND (
+         (status = 'pending' AND $1 IN ('under_review', 'rejected'))
+         OR (status = 'under_review' AND $1 = 'rejected')
+       )
+     FOR UPDATE
+   ),
+   changed AS (
+     UPDATE service_requests AS sr
+     SET status = $1,
+         admin_note = $2,
+         reviewed_by = $3,
+         reviewed_at = NOW(),
+         updated_at = NOW()
+     FROM previous
+     WHERE sr.id = previous.id
+     RETURNING sr.id, sr.customer_id, sr.status
+   )
+   SELECT changed.*, previous.previous_status
+   FROM changed
+   JOIN previous ON previous.id = changed.id`,
+  [nextStatus, note.trim(), actor, id]
+);
+ 
+
+  if (updated.rowCount !== 1) {
+    throw new ApiError(409, 'Request cannot be updated');
+  }
+
+  await c.query(
+    `INSERT INTO service_request_events
+     (request_id, actor_id, previous_status, new_status, note)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      id,
+      actor,
+      
+updated.rows[0].previous_status,
+     
+      nextStatus,
+      note.trim()
+    ]
+  );
+
+  result = updated.rows[0];
+}
+  
 else if (method === 'GET' && path === '/v1/admin/users') {
   result = (await c.query(
     'SELECT id, email, name, status, role FROM customers ORDER BY created_at DESC LIMIT 100'
