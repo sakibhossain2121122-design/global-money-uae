@@ -35,7 +35,12 @@ class PaymentMethodsApiTest {
             val connection = Connection(status, "not an array")
             val api = AccountApi("https://api.example") { connection }
             api.token = "test-session"
-            try { api.paymentMethods(); fail() } catch (_: IllegalStateException) { }
+            try {
+    api.paymentMethods()
+    fail("Expected account request to fail")
+} catch (_: AccountFailure) {
+    // Expected API failure
+            }
             assertEquals(if (status == 401) null else "test-session", api.token)
             assertTrue(connection.disconnected)
         }
