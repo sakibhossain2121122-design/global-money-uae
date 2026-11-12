@@ -37,6 +37,57 @@ try {
  await pool.query("UPDATE customers SET role='admin' WHERE email='admin@example.com'");
  const login=async(name:string)=>(await request('auth/login','POST',{email:name+'@example.com',password})).body.token as string;
  const alice=await login('alice'),bob=await login('bob'),admin=await login('admin');
+
+ await test('admin payment methods permissions and metadata safety',async()=>{
+  const path='admin/payment-methods';
+  const update={
+   id:'botim_money',
+   name:'BOTIM Money Test',
+   display_order:8,
+   logo_url:null
+  };
+
+  assert.equal((await request(path)).status,401);
+  assert.equal((await request(path,'GET',undefined,alice)).status,403);
+  assert.equal((await request(path,'PATCH',update,alice)).status,403);
+
+  const listing=await request(path,'GET',undefined,admin);
+  assert.equal(listing.status,200);
+  assert(Array.isArray(listing.body));
+
+  for(const invalid of [
+   {...update,id:'missing_method'},
+   {...update,id:'invalid-id!'},
+   {...update,name:''},
+   {...update,display_order:-1},
+   {...update,display_order:10001},
+   {...update,logo_url:'http://example.com/logo.png'}
+  ]){
+   const response=await request(path,'PATCH',invalid,admin);
+   assert([400,404].includes(response.status));
+  }
+
+  const saved=await request(path,'PATCH',{
+   ...update,
+   enabled:true
+  },admin);
+  assert.equal(saved.status,200);
+  assert.equal(saved.body.paymentProcessingEnabled,false);
+
+  const record=(await pool.query(
+   'SELECT name,display_order,enabled FROM payment_methods WHERE id=$1',
+   ['botim_money']
+  )).rows[0];
+  assert.equal(record.name,'BOTIM Money Test');
+  assert.equal(record.display_order,8);
+  assert.equal(record.enabled,false);
+
+  const logs=(await pool.query(
+   'SELECT action FROM audit_logs WHERE target=$1',
+   ['botim_money']
+  )).rows;
+  assert(logs.some(r=>r.action==='admin.payment_method.update'));
+ });
  const draft={amount_aed:'12.34',payment_method_id:'adcb',note:'Please review',idempotency_key:randomUUID()};
  let id='';
  await test('authenticated intake, ownership, idempotency and audited admin review',async t=>{

@@ -109,6 +109,31 @@ const server = createServer(async (req,res) => {
     }
     result={id,status:b.status,postingEnabled:false};
    }
+
+   else if(method==='GET' && path==='/v1/admin/payment-methods') {
+    result=(await c.query(
+     'SELECT id,name,country,currency,logo_url,display_order,enabled FROM payment_methods ORDER BY display_order,id'
+    )).rows;
+   }
+   else if(method==='PATCH' && path==='/v1/admin/payment-methods') {
+    const b=await body(req);
+    const id=text(b.id,1,40);
+    if(!/^[a-z0-9_]+$/.test(id)) throw new ApiError(400,'Invalid method ID');
+    const name=text(b.name,1,100);
+    const order=b.display_order;
+    if(typeof order!=='number'||!Number.isInteger(order)||order<0||order>10000)
+     throw new ApiError(400,'Invalid display order');
+    const logo=b.logo_url===null||b.logo_url===''?null:text(b.logo_url,1,500);
+    if(logo && (!logo.startsWith('https://')||/[\s<>"']/.test(logo)))
+     throw new ApiError(400,'Invalid HTTPS logo URL');
+    const updated=await c.query(
+     'UPDATE payment_methods SET name=$1,display_order=$2,logo_url=$3,updated_at=now() WHERE id=$4 RETURNING id,name,display_order,logo_url',
+     [name,order,logo,id]
+    );
+    if(!updated.rowCount) throw new ApiError(404,'Payment method not found');
+    await audit('admin.payment_method.update',id);
+    result={...updated.rows[0],paymentProcessingEnabled:false};
+   }
    else if(method==='GET' && path==='/v1/admin/users') result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
