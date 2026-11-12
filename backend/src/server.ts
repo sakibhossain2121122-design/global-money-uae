@@ -110,6 +110,26 @@ const server = createServer(async (req,res) => {
     result={id,status:b.status,postingEnabled:false};
    }
 
+
+   else if(method==='POST' && path==='/v1/admin/payment-methods') {
+    const b=await body(req);
+    if(Object.keys(b).some(k=>!['id','name','display_order'].includes(k)))
+     throw new ApiError(400,'Unsupported fields');
+    const id=text(b.id,1,40);
+    if(!/^[a-z][a-z0-9_]*$/.test(id))
+     throw new ApiError(400,'Invalid method ID');
+    const name=text(b.name,1,100);
+    const order=b.display_order;
+    if(typeof order!=='number'||!Number.isInteger(order)||order<0||order>10000)
+     throw new ApiError(400,'Invalid display order');
+    const created=await c.query(
+     "INSERT INTO payment_methods(id,name,country,currency,display_order,enabled) VALUES($1,$2,'AE','AED',$3,FALSE) RETURNING id,name,country,currency,display_order,enabled",
+     [id,name,order]
+    );
+    await audit('admin.payment_method.create',id);
+    result={...created.rows[0],paymentProcessingEnabled:false};
+    status=201;
+   }
    else if(method==='GET' && path==='/v1/admin/payment-methods') {
     result=(await c.query(
      'SELECT id,name,country,currency,logo_url,display_order,enabled FROM payment_methods ORDER BY display_order,id'

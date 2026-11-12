@@ -51,6 +51,48 @@ try {
   assert.equal((await request(path,'GET',undefined,alice)).status,403);
   assert.equal((await request(path,'PATCH',update,alice)).status,403);
 
+
+  const createdMethod={
+   id:'new_uae_bank_test',
+   name:'New UAE Bank Test',
+   display_order:20
+  };
+  assert.equal((await request(path,'POST',createdMethod)).status,401);
+  assert.equal((await request(path,'POST',createdMethod,alice)).status,403);
+
+  for(const invalid of [
+   {...createdMethod,id:'invalid-id!'},
+   {...createdMethod,name:''},
+   {...createdMethod,display_order:-1},
+   {...createdMethod,enabled:true},
+   {...createdMethod,account_number:'12345'}
+  ]){
+   assert.equal((await request(path,'POST',invalid,admin)).status,400);
+  }
+
+  const created=await request(path,'POST',createdMethod,admin);
+  assert.equal(created.status,201);
+  assert.equal(created.body.enabled,false);
+  assert.equal(created.body.paymentProcessingEnabled,false);
+
+  assert.equal(
+   (await request(path,'POST',createdMethod,admin)).status,409
+  );
+
+  const bank=(await pool.query(
+   'SELECT enabled FROM payment_methods WHERE id=$1',
+   [createdMethod.id]
+  )).rows[0];
+  assert.equal(bank.enabled,false);
+
+  const creationAudit=(await pool.query(
+   'SELECT action FROM audit_logs WHERE target=$1',
+   [createdMethod.id]
+  )).rows;
+  assert(
+   creationAudit.some(r=>r.action==='admin.payment_method.create')
+  );
+
   const listing=await request(path,'GET',undefined,admin);
   assert.equal(listing.status,200);
   assert(Array.isArray(listing.body));

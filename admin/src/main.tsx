@@ -26,6 +26,28 @@ function App() {
  });}}><h2>Sign in</h2><label>Email<input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)}/></label><button disabled={busy}>Sign in</button></form> : <>
  <nav>{['users','support','transactions','rates','add-money-requests','payment-methods'].map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>void perform(()=>load(value))}>{value==='add-money-requests'?'Add Money Requests':value}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});setToken('');setRows([]);})}>Logout</button></nav>
  <section><h2>{tab==='add-money-requests'?'Add Money Requests':tab}</h2>{tab==='add-money-requests'&&<><p>Request review only. No payment verification, wallet credit or balance adjustment. Never treat a note as proof of payment.</p><button disabled={busy} onClick={()=>void perform(async()=>{await load();setEvents([]);setEventRequest('');})}>Refresh requests</button></>}{tab==='rates'&&<form onSubmit={e=>{e.preventDefault();void perform(async()=>{await api('admin/rates','PUT',{value:rate});setRate('');await load();});}}><p>Internal AED/BDT configuration only. Customer rates remain unavailable.</p><label>Rate<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,6})?" value={rate} required onChange={e=>setRate(e.target.value)}/></label><button disabled={busy}>Save configuration</button></form>}
+
+ {tab==='payment-methods'&&<form onSubmit={e=>{
+  e.preventDefault();
+  const form=e.currentTarget;
+  const data=new FormData(form);
+  void perform(async()=>{
+   await api('admin/payment-methods','POST',{
+    id:String(data.get('id')),
+    name:String(data.get('name')),
+    display_order:Number(data.get('display_order'))
+   });
+   form.reset();
+   await load('payment-methods');
+  });
+ }}>
+ <h3>Add New UAE Bank / Wallet</h3>
+ <p>Metadata only. Real payment processing remains disabled.</p>
+ <label>Unique ID<input name="id" required pattern="[a-z][a-z0-9_]*" placeholder="new_uae_bank"/></label>
+ <label>Bank / Wallet Name<input name="name" required maxLength={100}/></label>
+ <label>Display Order<input name="display_order" type="number" min="0" max="10000" defaultValue="10" required/></label>
+ <button disabled={busy}>Add Payment Method</button>
+ </form>}
  {tab==='payment-methods'&&<form onSubmit={e=>{
  e.preventDefault();
  const data=new FormData(e.currentTarget);
