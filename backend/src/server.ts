@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
+import {submission,review} from './add-money.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -63,6 +64,96 @@ const server = createServer(async (req,res) => {
    else if(method==='DELETE' && /^\/v1\/beneficiaries\/[0-9a-f-]{36}$/.test(path)) {await c.query('DELETE FROM beneficiaries WHERE id=$1 AND customer_id=$2',[uuid(path.split('/').pop()),actor]);await audit('beneficiary.delete');result={ok:true};}
    else if(method==='GET' && path==='/v1/support') result=(await c.query('SELECT id,subject,status,created_at FROM support_tickets WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
    else if(method==='POST' && path==='/v1/support') {const b=await body(req);result=(await c.query('INSERT INTO support_tickets(customer_id,subject,message) VALUES($1,$2,$3) RETURNING id',[actor,text(b.subject),text(b.message,1,2000)])).rows[0];await audit('support.create');status=201;}
+   else if(method==='GET' && path==='/v1/add-money-request-methods') {
+    result=(await c.query("SELECT id,name,country,currency FROM payment_methods WHERE currency='AED' ORDER BY display_order,id")).rows;
+   } else if(method==='POST' && path==='/v1/add-money-requests') {
+    const b=submission(await body(req));
+    // Serialize retries by customer and key. Collisions only add waiting, never authorize access.
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[actor+':'+b.key]);
+    const existing=(await c.query("SELECT id,status,amount_aed,payment_method_id,customer_note FROM service_requests WHERE customer_id=$1 AND idempotency_key=$2 AND request_type='add_money'",[actor,b.key])).rows[0];
+    if(existing) {
+     if(existing.amount_aed!==b.amount||existing.payment_method_id!==b.method||existing.customer_note!==b.note)throw new ApiError(409,'Submission key already used for different details');
+     result={id:existing.id,status:existing.status,postingEnabled:false};
+    } else {
+     const method=await c.query("SELECT id FROM payment_methods WHERE id=$1 AND currency='AED' FOR SHARE",[b.method]);
+     if(!method.rowCount)throw new ApiError(400,'Unknown AED payment method');
+     const inserted=await c.query(`INSERT INTO service_requests(customer_id,request_type,amount_aed,payment_method_id,customer_note,idempotency_key)
+      VALUES($1,'add_money',$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id,status`,[actor,b.amount,b.method,b.note,b.key]);
+     if(!inserted.rowCount)throw new ApiError(409,'An identical request is already pending review');
+     const row=inserted.rows[0];
+     await c.query("INSERT INTO service_request_events(request_id,actor_id,previous_status,new_status) VALUES($1,$2,NULL,'pending')",[row.id,actor]);
+     await audit('add_money_request.submitted',row.id);result={...row,postingEnabled:false};status=201;
+    }
+   } else if(method==='GET' && path==='/v1/add-money-requests') {
+    result=(await c.query("SELECT id,amount_aed,payment_method_id,customer_note,status,created_at,updated_at FROM service_requests WHERE customer_id=$1 AND request_type='add_money' ORDER BY created_at DESC,id LIMIT 100",[actor])).rows;
+   } else if(method==='GET' && /^\/v1\/add-money-requests\/[0-9a-f-]{36}$/.test(path)) {
+    const id=uuid(path.split('/').pop());
+    const row=(await c.query("SELECT id,amount_aed,payment_method_id,customer_note,status,created_at,updated_at FROM service_requests WHERE id=$1 AND customer_id=$2 AND request_type='add_money'",[id,actor])).rows[0];
+    if(!row)throw new ApiError(404,'Request not found');result=row;
+   } else if(method==='GET' && path==='/v1/admin/add-money-requests') {
+    result=(await c.query("SELECT id,customer_id,amount_aed,payment_method_id,customer_note,status,admin_note,reviewed_by,reviewed_at,created_at FROM service_requests WHERE request_type='add_money' ORDER BY created_at DESC,id LIMIT 100")).rows;
+   } else if(method==='GET' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}\/events$/.test(path)) {
+    const id=uuid(path.split('/')[4]);
+    const found=await c.query("SELECT id FROM service_requests WHERE id=$1 AND request_type='add_money'",[id]);
+    if(!found.rowCount)throw new ApiError(404,'Request not found');
+    result=(await c.query('SELECT id,actor_id,previous_status,new_status,note,created_at FROM service_request_events WHERE request_id=$1 ORDER BY id',[id])).rows;
+   } else if(method==='PATCH' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}$/.test(path)) {
+    const id=uuid(path.split('/').pop()), b=review(await body(req));
+    const row=(await c.query("SELECT status FROM service_requests WHERE id=$1 AND request_type='add_money' FOR UPDATE",[id])).rows[0];
+    if(!row)throw new ApiError(404,'Request not found');
+    if(row.status!==b.expected)throw new ApiError(409,'Request changed; refresh before reviewing');
+    if(row.status!==b.status) {
+     await c.query('UPDATE service_requests SET status=$1,admin_note=$2,reviewed_by=$3,reviewed_at=now(),updated_at=now() WHERE id=$4',[b.status,b.note,actor,id]);
+     await c.query('INSERT INTO service_request_events(request_id,actor_id,previous_status,new_status,note) VALUES($1,$2,$3,$4,$5)',[id,actor,row.status,b.status,b.note]);
+     await audit('admin.add_money_request.'+b.status,id);
+    }
+    result={id,status:b.status,postingEnabled:false};
+   }
+
+
+   else if(method==='POST' && path==='/v1/admin/payment-methods') {
+    const b=await body(req);
+    if(Object.keys(b).some(k=>!['id','name','display_order'].includes(k)))
+     throw new ApiError(400,'Unsupported fields');
+    const id=text(b.id,1,40);
+    if(!/^[a-z][a-z0-9_]*$/.test(id))
+     throw new ApiError(400,'Invalid method ID');
+    const name=text(b.name,1,100);
+    const order=b.display_order;
+    if(typeof order!=='number'||!Number.isInteger(order)||order<0||order>10000)
+     throw new ApiError(400,'Invalid display order');
+    const created=await c.query(
+     "INSERT INTO payment_methods(id,name,country,currency,display_order,enabled) VALUES($1,$2,'AE','AED',$3,FALSE) RETURNING id,name,country,currency,display_order,enabled",
+     [id,name,order]
+    );
+    await audit('admin.payment_method.create',id);
+    result={...created.rows[0],paymentProcessingEnabled:false};
+    status=201;
+   }
+   else if(method==='GET' && path==='/v1/admin/payment-methods') {
+    result=(await c.query(
+     'SELECT id,name,country,currency,logo_url,display_order,enabled FROM payment_methods ORDER BY display_order,id'
+    )).rows;
+   }
+   else if(method==='PATCH' && path==='/v1/admin/payment-methods') {
+    const b=await body(req);
+    const id=text(b.id,1,40);
+    if(!/^[a-z0-9_]+$/.test(id)) throw new ApiError(400,'Invalid method ID');
+    const name=text(b.name,1,100);
+    const order=b.display_order;
+    if(typeof order!=='number'||!Number.isInteger(order)||order<0||order>10000)
+     throw new ApiError(400,'Invalid display order');
+    const logo=b.logo_url===null||b.logo_url===''?null:text(b.logo_url,1,500);
+    if(logo && (!logo.startsWith('https://')||/[\s<>"']/.test(logo)))
+     throw new ApiError(400,'Invalid HTTPS logo URL');
+    const updated=await c.query(
+     'UPDATE payment_methods SET name=$1,display_order=$2,logo_url=$3,updated_at=now() WHERE id=$4 RETURNING id,name,display_order,logo_url',
+     [name,order,logo,id]
+    );
+    if(!updated.rowCount) throw new ApiError(404,'Payment method not found');
+    await audit('admin.payment_method.update',id);
+    result={...updated.rows[0],paymentProcessingEnabled:false};
+   }
    else if(method==='GET' && path==='/v1/admin/users') result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
@@ -87,10 +178,11 @@ const server = createServer(async (req,res) => {
   await c.query('COMMIT');send(res,status,result);
  } catch(e) {
   await c.query('ROLLBACK').catch(()=>{});
-  const status=e instanceof ApiError?e.status:500;
+  const conflict=typeof e==='object' && e!==null && 'code' in e && e.code==='23505';
+  const status=e instanceof ApiError?e.status:conflict?409:500;
   // Never log passwords, tokens, beneficiary accounts, request bodies or raw SQL errors.
   console.error(JSON.stringify({event:'request.rejected',actor,status}));
-  send(res,status,{error:e instanceof ApiError?e.message:'Request could not be completed'});
+  send(res,status,{error:e instanceof ApiError?e.message:conflict?'An identical request is already pending review':'Request could not be completed'});
  } finally {c.release();}
 });
 server.requestTimeout=15000;server.headersTimeout=10000;

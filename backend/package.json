@@ -6,9 +6,9 @@
   "start": "node src/server.ts",
   "migrate": "node src/migrate.ts",
   "bootstrap-admin": "node src/bootstrap-admin.ts",
-  "test": "node src/security.test.ts",
+  "test": "node --test src/security.test.ts src/add-money.test.ts",
   "typecheck": "tsc --noEmit",
-  "test:integration": "node test/integration.test.ts",
+  "test:integration": "node test/integration.test.ts && node test/add-money.integration.test.ts",
   "test:payment-methods": "node --experimental-test-module-mocks test/payment-methods-readonly.test.mjs"
 },
 "dependencies": {
