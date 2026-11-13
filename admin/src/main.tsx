@@ -73,7 +73,36 @@ function App() {
  <label>Logo HTTPS URL<input name="logo_url" type="url" placeholder="https://example.com/logo.png"/></label>
  <button disabled={busy}>Save Payment Method</button>
  </form>}
- {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money-requests'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=><tr key={row.id??i}>{Object.keys(rows[0]).map(key=><td key={key} data-label={key}>{String(row[key]??'—')}</td>)}{tab==='add-money-requests'&&<td data-label="Review"><label>Review note<input maxLength={500} value={reviewNotes[row.id]??''} onChange={e=>setReviewNotes({...reviewNotes,[row.id]:e.target.value})}/></label><select disabled={busy} aria-label={'Request status '+row.id} value={row.status} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/add-money-requests/'+row.id,'PATCH',{status,expected_status:row.status,note:reviewNotes[row.id]??''});setEvents([]);setEventRequest('');await load();});}}>{['pending','under_review','rejected','cancelled'].map(value=><option key={value}>{value}</option>)}</select><button disabled={busy} onClick={()=>void perform(async()=>{setEvents(await api('admin/add-money-requests/'+row.id+'/events'));setEventRequest(row.id);})}>View audit events</button></td>}{tab==='users'&&<td><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}{tab==='support'&&<td><select disabled={busy} aria-label="Ticket status" value={row.status} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/support','PATCH',{id:row.id,status});await load();});}}>{['open','in_progress','closed'].map(status=><option key={status}>{status}</option>)}</select></td>}</tr>)}</tbody></table></div>}
+ {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money-requests'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=><tr key={row.id??i}>{Object.keys(rows[0]).map(key=><td key={key} data-label={key}>{String(row[key]??'—')}</td>)}{tab==='add-money-requests'&&<td data-label="Review"><label>Review note<input maxLength={500} value={reviewNotes[row.id]??''} onChange={e=>setReviewNotes({...reviewNotes,[row.id]:e.target.value})}/></label><div aria-label={'Request actions '+row.id}>
+ <button type="button"
+  disabled={busy||row.status==='pending'}
+  onClick={()=>void perform(async()=>{
+   await api('admin/add-money-requests/'+row.id,'PATCH',{
+    status:'pending',
+    expected_status:row.status,
+    note:reviewNotes[row.id]??''
+   });
+   setEvents([]);
+   setEventRequest('');
+   await load();
+  })}>Pending</button>
+ <button type="button" disabled
+  title="Verified payment settlement is not configured">
+  Success (Unavailable)
+ </button>
+ <button type="button"
+  disabled={busy||row.status==='rejected'}
+  onClick={()=>void perform(async()=>{
+   await api('admin/add-money-requests/'+row.id,'PATCH',{
+    status:'rejected',
+    expected_status:row.status,
+    note:reviewNotes[row.id]??''
+   });
+   setEvents([]);
+   setEventRequest('');
+   await load();
+  })}>Rejected</button>
+ </div><button disabled={busy} onClick={()=>void perform(async()=>{setEvents(await api('admin/add-money-requests/'+row.id+'/events'));setEventRequest(row.id);})}>View audit events</button></td>}{tab==='users'&&<td><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}{tab==='support'&&<td><select disabled={busy} aria-label="Ticket status" value={row.status} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/support','PATCH',{id:row.id,status});await load();});}}>{['open','in_progress','closed'].map(status=><option key={status}>{status}</option>)}</select></td>}</tr>)}</tbody></table></div>}
  {tab==='add-money-requests'&&eventRequest&&<div aria-live="polite"><h3>Audit events • {eventRequest}</h3>{events.map(event=><p key={event.id}>{event.created_at} • {event.previous_status??'new'} → {event.new_status} • {event.actor_id} {event.note&&'• '+event.note}</p>)}</div>}
  <p>Most recent 100 records. Transactions are read only.</p></section></>}
  <footer>Tokens stay in memory. Closing or reloading this page requires signing in again.</footer></main>;

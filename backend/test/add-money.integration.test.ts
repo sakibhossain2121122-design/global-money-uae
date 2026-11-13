@@ -170,7 +170,7 @@ try {
   });
   await t.test('admin statuses are constrained and stale reviews cannot overwrite',async()=>{
    assert.equal((await request('admin/add-money-requests','GET',undefined,admin)).body.length,2);
-   for(const status of ['paid','approved','credited'])assert.equal((await request('admin/add-money-requests/'+id,'PATCH',{status,expected_status:'pending'},admin)).status,400);
+   for(const status of ['paid','approved','credited','success'])assert.equal((await request('admin/add-money-requests/'+id,'PATCH',{status,expected_status:'pending'},admin)).status,400);
    const r=await request('admin/add-money-requests/'+id,'PATCH',{status:'under_review',expected_status:'pending',note:'Reviewing request only'},admin);assert.equal(r.status,200);assert.equal(r.body.postingEnabled,false);
    assert.equal((await request('admin/add-money-requests/'+id,'PATCH',{status:'rejected',expected_status:'pending'},admin)).status,409);
    const detail=(await request('add-money-requests/'+id,'GET',undefined,alice)).body;assert.equal(detail.status,'under_review');assert(!('admin_note' in detail));
