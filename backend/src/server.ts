@@ -182,7 +182,38 @@ else if (
   await audit('admin.payment_account.create', inserted.rows[0].id);
   status = 201;
 }
-   
+ 
+else if (
+  method === 'PATCH' &&
+  path === '/v1/admin/payment-accounts'
+) {
+  const b = await body(req);
+  const id = uuid(b.id);
+
+  const keys = Object.keys(b);
+  if (
+    keys.some(k => !['id', 'enabled'].includes(k)) ||
+    typeof b.enabled !== 'boolean'
+  ) {
+    throw new ApiError(400, 'Invalid update data');
+  }
+
+  const updated = await c.query(
+    `UPDATE company_payment_accounts
+     SET enabled=$1, updated_at=NOW()
+     WHERE id=$2 AND archived_at IS NULL
+     RETURNING id, enabled`,
+    [b.enabled, id]
+  );
+
+  if (!updated.rowCount) {
+    throw new ApiError(404, 'Account not found');
+  }
+
+  result = updated.rows[0];
+  await audit('admin.payment_account.status', id);
+}
+ 
 else if(method==='GET' && path==='/v1/admin/users')
  result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
