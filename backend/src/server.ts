@@ -109,7 +109,35 @@ const server = createServer(async (req,res) => {
     }
     result={id,status:b.status,postingEnabled:false};
    }
-   else if(method==='GET' && path==='/v1/admin/users') result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
+   else if (
+     method === 'GET' &&
+     path === '/v1/admin/payment-accounts'
+   ) {
+     result = (await c.query(`
+       SELECT id, payment_method_id,
+              account_holder, account_number,
+              iban, instructions, enabled,
+              archived_at, updated_at
+       FROM company_payment_accounts
+       ORDER BY created_at DESC
+       LIMIT 100
+     `)).rows;
+   }
+   else if (
+     method === 'GET' &&
+     path === '/v1/admin/payout-banks'
+   ) {
+     result = (await c.query(`
+       SELECT id, name, country, enabled,
+              archived_at, created_at
+       FROM payout_banks
+       ORDER BY name, id
+       LIMIT 100
+     `)).rows;
+   }
+   
+else if(method==='GET' && path==='/v1/admin/users')
+ result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/rates') result=(await c.query('SELECT pair,value,updated_at FROM rates')).rows;
