@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
 import {submission,review} from './add-money.ts';
+import { validateAccount, validateBankName } from './admin-control.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -135,6 +136,52 @@ const server = createServer(async (req,res) => {
        LIMIT 100
      `)).rows;
    }
+else if (
+  method === 'POST' &&
+  path === '/v1/admin/payment-accounts'
+) {
+  const b = await body(req);
+
+  if (
+    typeof b.payment_method_id !== 'string' ||
+    typeof b.account_holder !== 'string' ||
+    (b.account_number != null &&
+      typeof b.account_number !== 'string') ||
+    (b.iban != null &&
+      typeof b.iban !== 'string') ||
+    (b.instructions != null &&
+      typeof b.instructions !== 'string')
+  ) {
+    throw new ApiError(400, 'Invalid account data');
+  }
+
+  const data = validateAccount({
+    payment_method_id: b.payment_method_id,
+    account_holder: b.account_holder,
+    account_number: b.account_number as string | null,
+    iban: b.iban as string | null,
+    instructions: b.instructions as string | null
+  });
+
+  const inserted = await c.query(
+    `INSERT INTO company_payment_accounts
+     (payment_method_id, account_holder,
+      account_number, iban, instructions, enabled)
+     VALUES ($1,$2,$3,$4,$5,FALSE)
+     RETURNING id, enabled`,
+    [
+      data.payment_method_id,
+      data.account_holder,
+      data.account_number,
+      data.iban,
+      data.instructions
+    ]
+  );
+
+  result = inserted.rows[0];
+  await audit('admin.payment_account.create', inserted.rows[0].id);
+  status = 201;
+}
    
 else if(method==='GET' && path==='/v1/admin/users')
  result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
