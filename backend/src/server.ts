@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
 import {submission,review} from './add-money.ts';
+import { validateAccount, validateBankName } from './admin-control.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -109,7 +110,112 @@ const server = createServer(async (req,res) => {
     }
     result={id,status:b.status,postingEnabled:false};
    }
-   else if(method==='GET' && path==='/v1/admin/users') result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
+   else if (
+     method === 'GET' &&
+     path === '/v1/admin/payment-accounts'
+   ) {
+     result = (await c.query(`
+       SELECT id, payment_method_id,
+              account_holder, account_number,
+              iban, instructions, enabled,
+              archived_at, updated_at
+       FROM company_payment_accounts
+       ORDER BY created_at DESC
+       LIMIT 100
+     `)).rows;
+   }
+   else if (
+     method === 'GET' &&
+     path === '/v1/admin/payout-banks'
+   ) {
+     result = (await c.query(`
+       SELECT id, name, country, enabled,
+              archived_at, created_at
+       FROM payout_banks
+       ORDER BY name, id
+       LIMIT 100
+     `)).rows;
+   }
+else if (
+  method === 'POST' &&
+  path === '/v1/admin/payment-accounts'
+) {
+  const b = await body(req);
+
+  if (
+    typeof b.payment_method_id !== 'string' ||
+    typeof b.account_holder !== 'string' ||
+    (b.account_number != null &&
+      typeof b.account_number !== 'string') ||
+    (b.iban != null &&
+      typeof b.iban !== 'string') ||
+    (b.instructions != null &&
+      typeof b.instructions !== 'string')
+  ) {
+    throw new ApiError(400, 'Invalid account data');
+  }
+
+  const data = validateAccount({
+    payment_method_id: b.payment_method_id,
+    account_holder: b.account_holder,
+    account_number: b.account_number as string | null,
+    iban: b.iban as string | null,
+    instructions: b.instructions as string | null
+  });
+
+  const inserted = await c.query(
+    `INSERT INTO company_payment_accounts
+     (payment_method_id, account_holder,
+      account_number, iban, instructions, enabled)
+     VALUES ($1,$2,$3,$4,$5,FALSE)
+     RETURNING id, enabled`,
+    [
+      data.payment_method_id,
+      data.account_holder,
+      data.account_number,
+      data.iban,
+      data.instructions
+    ]
+  );
+
+  result = inserted.rows[0];
+  await audit('admin.payment_account.create', inserted.rows[0].id);
+  status = 201;
+}
+ 
+else if (
+  method === 'PATCH' &&
+  path === '/v1/admin/payment-accounts'
+) {
+  const b = await body(req);
+  const id = uuid(b.id);
+
+  const keys = Object.keys(b);
+  if (
+    keys.some(k => !['id', 'enabled'].includes(k)) ||
+    typeof b.enabled !== 'boolean'
+  ) {
+    throw new ApiError(400, 'Invalid update data');
+  }
+
+  const updated = await c.query(
+    `UPDATE company_payment_accounts
+     SET enabled=$1, updated_at=NOW()
+     WHERE id=$2 AND archived_at IS NULL
+     RETURNING id, enabled`,
+    [b.enabled, id]
+  );
+
+  if (!updated.rowCount) {
+    throw new ApiError(404, 'Account not found');
+  }
+
+  result = updated.rows[0];
+  await audit('admin.payment_account.status', id);
+}
+ 
+else if(method==='GET' && path==='/v1/admin/users')
+ result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/rates') result=(await c.query('SELECT pair,value,updated_at FROM rates')).rows;
