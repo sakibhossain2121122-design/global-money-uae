@@ -5,14 +5,14 @@ import {once} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {requestJson} from './http-client.ts';
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!new URL(url).pathname.endsWith('_test'))throw Error('Disposable TEST_DATABASE_URL ending in _test required');
 const pool=new pg.Pool({connectionString:url});
 const endpoint='http://127.0.0.1:3108/v1/';
 let child:ReturnType<typeof spawn>|undefined;
 async function request(path:string,method='GET',body?:unknown,bearer?:string){
- const r=await fetch(endpoint+path,{method,headers:{'Content-Type':'application/json',...(bearer?{Authorization:'Bearer '+bearer}:{})},body:body===undefined?undefined:JSON.stringify(body)});
- return {status:r.status,body:await r.json()};
+ return requestJson(endpoint+path,method,body,bearer);
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
@@ -202,5 +202,14 @@ try {
    await pool.query("UPDATE customers SET role='customer' WHERE email='admin@example.com'");
    assert.equal((await request('admin/add-money-requests/'+id,'PATCH',{status:'pending',expected_status:'cancelled'},admin)).status,403);
   });
+ });
+ await test('HTTP rate limit returns 429 to a client exceeding the shared request budget',async()=>{
+  const clientAddress='127.0.255.254';
+  for(let i=0;i<100;i++){
+   assert.equal((await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress)).status,200);
+  }
+  const limited=await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress);
+  assert.equal(limited.status,429);
+  assert.deepEqual(limited.body,{error:'Too many requests'});
  });
 }finally{if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}await pool.end();}
