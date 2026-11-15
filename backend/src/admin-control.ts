@@ -9,9 +9,7 @@ export type AccountInput = {
   instructions?: string | null;
 };
 
-export function validateAccount(
-  input: AccountInput
-): AccountInput {
+export function validateAccount(input: AccountInput): AccountInput {
   if (!/^[a-z0-9_]{2,40}$/.test(
     input.payment_method_id ?? ''
   )) {
@@ -46,13 +44,51 @@ export function validateAccount(
     );
   }
 
+  const instructions = input.instructions?.trim() || null;
+  if (instructions && instructions.length > 500) {
+    throw new ApiError(400, 'Invalid instructions');
+  }
+
   return {
     payment_method_id: input.payment_method_id,
     account_holder: holder,
     account_number: account,
     iban,
-    instructions: input.instructions?.trim().slice(0, 500) || null
+    instructions
   };
+}
+
+export function validateAddMoneyMethod(
+  input: Record<string, unknown>
+): { id: string; add_money_request_enabled: boolean } {
+  if (
+    Object.keys(input).some(key =>
+      !['id', 'add_money_request_enabled'].includes(key)
+    ) ||
+    typeof input.id !== 'string' ||
+    !/^[a-z0-9_]{2,40}$/.test(input.id) ||
+    typeof input.add_money_request_enabled !== 'boolean'
+  ) {
+    throw new ApiError(400, 'Invalid Add Money method update');
+  }
+
+  return {
+    id: input.id,
+    add_money_request_enabled: input.add_money_request_enabled
+  };
+}
+
+export function validateEnabledToggle(
+  input: Record<string, unknown>
+): { id: unknown; enabled: boolean } {
+  if (
+    Object.keys(input).some(key => !['id', 'enabled'].includes(key)) ||
+    typeof input.enabled !== 'boolean'
+  ) {
+    throw new ApiError(400, 'Invalid update data');
+  }
+
+  return { id: input.id, enabled: input.enabled };
 }
 
 export function validateBankName(value: unknown): string {

@@ -13,8 +13,11 @@ adds service_requests and service_request_events with the four review statuses.
 No historical migration was edited. New migration 004 adds an optional payment
 method reference and per-customer UUID idempotency key to service_requests, with
 unique indexes for retry keys and identical active requests, and an event index.
-Legacy rows without keys/references and their events remain intact. Both migration
-entrypoints now use the same authoritative registry in backend/src/migrate.ts.
+Migration 005 adds UAE payment accounts, Bangladesh payout banks and control
+audit events. Migration 006 adds a separate Add Money request-availability flag
+(defaulting existing methods to enabled) and prevents duplicate active payout
+bank names. Legacy rows without keys/references and their events remain intact.
+Both migration entrypoints use the registry in backend/src/migrate.ts.
 
 `npm --prefix backend run migrate` uses DATABASE_URL. Apply only through the
 normal reviewed migration process; this task applies migrations only to a local
@@ -61,6 +64,9 @@ accidental duplicates after app restarts.
 
 Every call rechecks the active user's admin role on the server.
 
+- GET /v1/admin/payment-methods and PATCH /v1/admin/payment-methods with
+  `{id,add_money_request_enabled}` configure which AED methods may be chosen
+  for request-only intake. This field is separate from actual payment status.
 - GET /v1/admin/add-money-requests: latest 100 Add Money requests, including review
   metadata. Other request types are not included.
 - PATCH /v1/admin/add-money-requests/:id: {status,expected_status,note?}. Both
@@ -76,6 +82,14 @@ its database transaction. A no-op PATCH adds no event and does not alter a note.
 Admin notes, reviewer identifiers and review events are excluded from customer
 history/details. The Admin Panel refreshes requests after updates and displays
 conflicts without silently retrying with a newer status.
+
+UAE payment accounts and Bangladesh payout banks are admin-managed through
+`/v1/admin/payment-accounts` and `/v1/admin/payout-banks`. Creation defaults to
+disabled; PATCH changes administrative status, and DELETE soft-archives rather
+than removing a record. Account data is validated, payout-bank country is fixed
+to `BD`, and both `audit_logs` and `admin_control_events` record each change in
+the same transaction. These records do not trigger customer payment, wallet
+credit, or transfer behavior.
 
 ## Review and validation
 
