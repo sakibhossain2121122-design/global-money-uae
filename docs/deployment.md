@@ -24,6 +24,11 @@ GRANT UPDATE(status) ON support_tickets TO gm_app;
 GRANT INSERT, UPDATE ON rates TO gm_app;
 GRANT INSERT(actor_id,action,target) ON audit_logs TO gm_app;
 GRANT USAGE ON SEQUENCE audit_logs_id_seq TO gm_app;
+GRANT SELECT ON payment_methods TO gm_app;
+GRANT UPDATE(add_money_request_enabled) ON payment_methods TO gm_app;
+GRANT SELECT, INSERT, UPDATE ON company_payment_accounts, payout_banks TO gm_app;
+GRANT INSERT(admin_id,action,target_id) ON admin_control_events TO gm_app;
+GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;
 ```
 
 Do not grant runtime ownership, DDL, role changes, ledger writes, transaction writes, or audit update/delete access. The registration code deliberately omits role fields. Provision admins individually through the owner connection after verifying identity and secure access. There is no default password. Add an identity-aware gateway with administrator MFA before exposing administration outside a trusted network.

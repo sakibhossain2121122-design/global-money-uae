@@ -5,19 +5,19 @@ import {once} from 'node:events';
 import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
+import {requestJson} from './http-client.ts';
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!new URL(url).pathname.endsWith('_test'))throw Error('Disposable TEST_DATABASE_URL ending in _test required');
 const pool=new pg.Pool({connectionString:url});
 const endpoint='http://127.0.0.1:3108/v1/';
 let child:ReturnType<typeof spawn>|undefined;
 async function request(path:string,method='GET',body?:unknown,bearer?:string){
- const r=await fetch(endpoint+path,{method,headers:{'Content-Type':'application/json',...(bearer?{Authorization:'Bearer '+bearer}:{})},body:body===undefined?undefined:JSON.stringify(body)});
- return {status:r.status,body:await r.json()};
+ return requestJson(endpoint+path,method,body,bearer);
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'4');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'6');
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  // Exercise an upgrade from 003 with existing request/event history, not just an empty database.
  for(const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql'])await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
@@ -26,7 +26,7 @@ try {
  const legacy=(await pool.query("INSERT INTO service_requests(customer_id,request_type,amount_aed) VALUES($1,'send_money',10) RETURNING id",[legacyCustomer])).rows[0].id;
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacy,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'4');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'6');
  assert.equal((await pool.query('SELECT status FROM service_requests WHERE id=$1',[legacy])).rows[0].status,'pending');
  assert.equal((await pool.query('SELECT count(*) FROM service_request_events WHERE request_id=$1',[legacy])).rows[0].count,'1');
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
@@ -102,6 +102,95 @@ try {
    assert.equal((await request('add-money-requests/'+legacy,'GET',undefined,alice)).status,404);
    assert.equal((await request('admin/add-money-requests/'+legacy,'PATCH',{status:'rejected',expected_status:'pending'},admin)).status,404);
   });
+  await t.test('admin Add Money, UAE account and Bangladesh bank controls are authorized and audited',async()=>{
+   for(const path of ['payment-methods','payment-accounts','payout-banks']){
+    assert.equal((await request('admin/'+path)).status,401);
+    assert.equal((await request('admin/'+path,'GET',undefined,alice)).status,403);
+   }
+   const protectedChanges=[
+    ['payment-methods','PATCH',{id:'adcb',add_money_request_enabled:false}],
+    ['payment-accounts','POST',{payment_method_id:'adcb',account_holder:'Example',account_number:'12345678'}],
+    ['payment-accounts','PATCH',{id:randomUUID(),enabled:true}],
+    ['payment-accounts/'+randomUUID(),'DELETE',undefined],
+    ['payout-banks','POST',{name:'Example Bank'}],
+    ['payout-banks','PATCH',{id:randomUUID(),enabled:true}],
+    ['payout-banks/'+randomUUID(),'DELETE',undefined]
+   ] as const;
+   for(const [path,method,body] of protectedChanges){
+    assert.equal((await request('admin/'+path,method,body)).status,401);
+    assert.equal((await request('admin/'+path,method,body,alice)).status,403);
+   }
+   const methods=(await request('admin/payment-methods','GET',undefined,admin)).body;
+   assert(methods.length>0);
+   assert(methods.every((method:{add_money_request_enabled:boolean})=>method.add_money_request_enabled));
+   assert.equal((await request('admin/payment-methods','PATCH',{id:'adcb',add_money_request_enabled:'false'},admin)).status,400);
+   assert.equal((await request('admin/payment-methods','PATCH',{id:'adcb',add_money_request_enabled:false,enabled:true},admin)).status,400);
+   assert.equal((await request('admin/payment-methods','PATCH',{id:'adcb',add_money_request_enabled:false},alice)).status,403);
+   assert.equal((await request('admin/payment-methods','PATCH',{id:'adcb',add_money_request_enabled:false},admin)).status,200);
+   assert(!(await request('add-money-request-methods','GET',undefined,alice)).body.some((method:{id:string})=>method.id==='adcb'));
+   assert.equal((await request('add-money-requests','POST',{...draft,idempotency_key:randomUUID()},alice)).status,400);
+   assert.equal((await request('payment-methods','GET',undefined,alice)).body.every((method:{enabled:boolean})=>!method.enabled),true);
+   assert.equal((await pool.query(
+    "SELECT enabled FROM payment_methods WHERE id='adcb'"
+   )).rows[0].enabled,false);
+   assert.equal((await request('admin/payment-methods','PATCH',{id:'adcb',add_money_request_enabled:true},admin)).status,200);
+
+   const accountData={payment_method_id:'adcb',account_holder:'Example UAE LLC',account_number:'1234567890'};
+   for(const input of [{...accountData,enabled:true},{...accountData,account_number:123456}])
+    assert.equal((await request('admin/payment-accounts','POST',input,admin)).status,400);
+   assert.equal((await request('admin/payment-accounts','POST',accountData,alice)).status,403);
+   const createdAccount=await request('admin/payment-accounts','POST',accountData,admin);
+   assert.equal(createdAccount.status,201);
+   assert.equal(createdAccount.body.enabled,false);
+   const accountId=createdAccount.body.id as string;
+   assert.equal((await request('admin/payment-accounts','PATCH',{id:accountId,enabled:true},admin)).status,200);
+   assert.equal((await request('admin/payment-accounts/'+accountId,'DELETE',undefined,admin)).body.archived,true);
+   assert.equal((await request('admin/payment-accounts','PATCH',{id:accountId,enabled:true},admin)).status,404);
+   const accountAudits=(await pool.query(
+    'SELECT action FROM admin_control_events WHERE target_id=$1',[accountId]
+   )).rows.map(row=>row.action);
+   assert.deepEqual(accountAudits,[
+    'admin.payment_account.create',
+    'admin.payment_account.status',
+    'admin.payment_account.archive'
+   ]);
+   const accountLog=(await pool.query(
+    'SELECT action FROM audit_logs WHERE target=$1 ORDER BY id',[accountId]
+   )).rows.map(row=>row.action);
+   assert.deepEqual(accountLog,accountAudits);
+
+   assert.equal((await request('admin/payout-banks','POST',{name:'  '},admin)).status,400);
+   assert.equal((await request('admin/payout-banks','POST',{name:'Example Bank',country:'US'},admin)).status,400);
+   assert.equal((await request('admin/payout-banks','POST',{name:'Example Bank'},alice)).status,403);
+   const createdBank=await request('admin/payout-banks','POST',{name:'Example Bank'},admin);
+   assert.equal(createdBank.status,201);
+   assert.equal(createdBank.body.country,'BD');
+   assert.equal(createdBank.body.enabled,false);
+   const bankId=createdBank.body.id as string;
+   const duplicateBank=await request('admin/payout-banks','POST',{name:' example bank '},admin);
+   assert.equal(duplicateBank.status,409);
+   assert.equal(duplicateBank.body.error,'Payout bank already exists');
+   assert.equal((await request('admin/payout-banks','PATCH',{id:bankId,enabled:true},admin)).status,200);
+   assert.equal((await request('admin/payout-banks/'+bankId,'DELETE',undefined,admin)).body.archived,true);
+   assert.equal((await request('admin/payout-banks','PATCH',{id:bankId,enabled:true},admin)).status,404);
+   const bankAudits=(await pool.query(
+    'SELECT action FROM admin_control_events WHERE target_id=$1',[bankId]
+   )).rows.map(row=>row.action);
+   assert.deepEqual(bankAudits,[
+    'admin.payout_bank.create',
+    'admin.payout_bank.status',
+    'admin.payout_bank.archive'
+   ]);
+   const bankLog=(await pool.query(
+    'SELECT action FROM audit_logs WHERE target=$1 ORDER BY id',[bankId]
+   )).rows.map(row=>row.action);
+   assert.deepEqual(bankLog,bankAudits);
+   assert.equal((await request('admin/payout-banks','POST',{name:' example bank '},admin)).status,201);
+   assert((await pool.query(
+    "SELECT action FROM audit_logs WHERE target=$1",
+    ['adcb']
+   )).rows.some(row=>row.action==='admin.add_money_method.request_availability'));
+  });
   await t.test('financial posting is still impossible and there are no balance effects',async()=>{
    for(const path of ['add-money','payments','wallet/credit','wallet/debit','remittances'])assert.equal((await request(path,'POST',{},alice)).status,503);
    for(const table of ['ledger_journals','ledger_entries','transactions'])assert.equal((await pool.query('SELECT count(*) FROM '+table)).rows[0].count,'0');
@@ -113,5 +202,14 @@ try {
    await pool.query("UPDATE customers SET role='customer' WHERE email='admin@example.com'");
    assert.equal((await request('admin/add-money-requests/'+id,'PATCH',{status:'pending',expected_status:'cancelled'},admin)).status,403);
   });
+ });
+ await test('HTTP rate limit returns 429 to a client exceeding the shared request budget',async()=>{
+  const clientAddress='127.0.255.254';
+  for(let i=0;i<100;i++){
+   assert.equal((await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress)).status,200);
+  }
+  const limited=await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress);
+  assert.equal(limited.status,429);
+  assert.deepEqual(limited.body,{error:'Too many requests'});
  });
 }finally{if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}await pool.end();}

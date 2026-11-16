@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import pg from 'pg';
 import {readFile} from 'node:fs/promises';
+import {requestJson} from './http-client.ts';
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !new URL(url).pathname.endsWith('_test')) throw new Error('TEST_DATABASE_URL must point to a disposable database ending in _test');
 const pool=new pg.Pool({connectionString:url});
@@ -12,8 +13,7 @@ const child=spawn(process.execPath,['src/server.ts'],{cwd:new URL('..',import.me
 child.stderr.on('data',()=>{}); // Server rejection events contain no request secrets.
 const endpoint='http://127.0.0.1:'+port+'/v1/';
 async function request(path:string,method='GET',body?:unknown,token?:string){
- const r=await fetch(endpoint+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});
- return {status:r.status,body:await r.json()};
+ return requestJson(endpoint+path,method,body,token);
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');

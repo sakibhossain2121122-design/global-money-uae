@@ -13,7 +13,9 @@ const migrations = [
   { version: '001', file: '001_foundation.sql' },
   { version: '002', file: '002_payment_methods.sql' },
   { version: '003', file: '003_admin_controls.sql' },
-  { version: '004', file: '004_add_money_requests.sql' }
+  { version: '004', file: '004_add_money_requests.sql' },
+  { version: '005', file: '005_admin_control_system.sql' },
+  { version: '006', file: '006_admin_request_configuration.sql' }
 ];
 
 

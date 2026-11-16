@@ -37,9 +37,15 @@ jobs:
       - name: Build APK and run tests
         env:
           
-          API_BASE_URL: ${{ github.ref_name == 'feature/add-money-request-review' && vars.STAGING_API_BASE_URL || vars.API_BASE_URL }}
+          
+          API_BASE_URL: ${{ vars.STAGING_API_BASE_URL }}
+          
           
         run: |
+          if [[ -z "${API_BASE_URL//[[:space:]]/}" ]]; then
+            echo "::error::STAGING_API_BASE_URL must be configured and non-empty for Android staging builds."
+            exit 1
+          fi
           chmod +x gradlew
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug "-PAPI_BASE_URL=${API_BASE_URL}"
           
