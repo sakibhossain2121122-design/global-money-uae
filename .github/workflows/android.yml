@@ -42,6 +42,10 @@ jobs:
           
           
         run: |
+          if [[ -z "${API_BASE_URL//[[:space:]]/}" ]]; then
+            echo "::error::STAGING_API_BASE_URL must be configured and non-empty for Android staging builds."
+            exit 1
+          fi
           chmod +x gradlew
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug "-PAPI_BASE_URL=${API_BASE_URL}"
           
