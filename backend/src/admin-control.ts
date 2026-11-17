@@ -46,6 +46,7 @@ export function validateAccount(
     );
   }
 
+  if(input.instructions && input.instructions.length>500)throw new ApiError(400,'Instructions too long');
   return {
     payment_method_id: input.payment_method_id,
     account_holder: holder,

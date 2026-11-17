@@ -1,5 +1,5 @@
 import {ApiError,text,uuid} from './security.ts';
-export const reviewStatuses=['pending','under_review','rejected','cancelled'];
+export const reviewStatuses=['pending','under_review','processing','approved','rejected','cancelled'];
 export function fields(b:Record<string,unknown>,allowed:string[]) {
  if(Object.keys(b).some(k=>!allowed.includes(k)))throw new ApiError(400,'Unsupported fields');
 }

@@ -13,8 +13,8 @@ test('structured requests reject unauthorized fields and invalid references',()=
  assert.throws(()=>submission({...b,idempotency_key:'invalid'}));assert.throws(()=>submission({...b,payment_method_id:'../x'}));
  assert.equal(note('   '),null);assert.equal(note(' বাংলা '),'বাংলা');assert.throws(()=>note('x'.repeat(501)));assert.throws(()=>note(2));
 });
-test('review requires known statuses and an expected state, never paid or approved',()=>{
+test('review requires known statuses and an expected state, never paid or successful',()=>{
  assert.equal(review({status:'under_review',expected_status:'pending'}).status,'under_review');
- for(const status of ['paid','approved','credited',true,undefined,['pending']])assert.throws(()=>review({status,expected_status:'pending'}));
+ for(const status of ['paid','successful','credited',true,undefined,['pending']])assert.throws(()=>review({status,expected_status:'pending'}));
  assert.throws(()=>review({status:'rejected'}));assert.throws(()=>review({status:'rejected',expected_status:'pending',balance:100}));
 });

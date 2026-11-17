@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import pg from 'pg';
 import {readFile} from 'node:fs/promises';
@@ -17,7 +17,7 @@ async function request(path:string,method='GET',body?:unknown,token?:string){
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
- await pool.query(await readFile(new URL('../migrations/001_foundation.sql',import.meta.url),'utf8'));
+ execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
  let ready=false;
  for(let n=0;n<50;n++){try{const r=await fetch('http://127.0.0.1:'+port+'/health');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
  assert(ready,'API did not start');
