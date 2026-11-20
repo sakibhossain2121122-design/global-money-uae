@@ -1,3 +1,5 @@
+For the current additive wallet/admin upgrade, also read [customer-wallet-admin-audit.md](customer-wallet-admin-audit.md), including migration 007 runtime-role grants and the distinction between reservations and disabled payment execution.
+
 # Deployment and security boundaries
 
 Deploy this as an account-platform staging foundation first. Real money posting, collection, BOTIM MONEY, remittance and identity-document intake remain disabled in application routes and database triggers. No environment variable enables those operations. Completing provider agreements and legal authorization also requires a separately reviewed integration, reconciliation, idempotency, monitoring and compliance implementation.
