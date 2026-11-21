@@ -11,8 +11,8 @@ android {
         applicationId = "com.globalmoney.uae.demo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
         val apiUrl = providers.gradleProperty("API_BASE_URL").orElse("").get()
         require(apiUrl.isEmpty() || apiUrl.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?"))) { "API_BASE_URL must be an HTTPS origin" }
         buildConfigField("String", "API_BASE_URL", "\"$apiUrl\"")
