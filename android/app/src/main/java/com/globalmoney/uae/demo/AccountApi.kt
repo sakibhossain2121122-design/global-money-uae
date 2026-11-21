@@ -57,6 +57,9 @@ val status = connection.responseCode
 
 if (status == 401) {
     token = null
+    if (path == "auth/login") {
+        throw AccountFailure.Rejected(401)
+    }
     throw AccountFailure.Session()
 }
 
