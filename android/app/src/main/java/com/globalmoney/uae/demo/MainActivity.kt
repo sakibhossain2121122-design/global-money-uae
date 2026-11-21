@@ -66,6 +66,10 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var bank by remember { mutableStateOf("") }
     var provider by rememberSaveable { mutableStateOf("bKash") }
     var subject by remember { mutableStateOf("") }
+var uaeMobile by remember { mutableStateOf("") }
+var confirmPassword by remember { mutableStateOf("") }
+var identityMethod by remember { mutableStateOf("emirates_id") }
+
     var message by remember { mutableStateOf("") }
     var rows by remember { mutableStateOf(JSONArray()) }
     var paymentMethods by remember { mutableStateOf<List<PaymentMethod>>(emptyList()) }
