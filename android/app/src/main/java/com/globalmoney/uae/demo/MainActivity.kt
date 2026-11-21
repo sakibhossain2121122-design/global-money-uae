@@ -6,6 +6,8 @@ import android.os.Looper
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -15,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -78,6 +81,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var addKey by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var addPayload by remember { mutableStateOf<String?>(null) }
     var requestRows by remember { mutableStateOf(JSONArray()) }
+    var receiptRequestId by remember { mutableStateOf("") }
+    var walletBalance by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     fun call(work: () -> String, done: (String) -> Unit = {}) {
@@ -98,13 +103,15 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                     is AccountFailure.Unavailable ->
                         t("Account service temporarily unavailable.", "অ্যাকাউন্ট সেবা সাময়িক অনুপলব্ধ।")
 
+                    is AccountFailure.InvalidReceipt ->
+                        t("Choose a JPG, PNG or PDF receipt of at most 5 MB.", "সর্বোচ্চ ৫ এমবি JPG, PNG বা PDF রসিদ নির্বাচন করুন।")
+
                     is AccountFailure.Rejected -> when (error.status) {
                         400 -> t("Check your registration details and password.", "নিবন্ধনের তথ্য ও পাসওয়ার্ড পরীক্ষা করুন।")
                         409 -> t("Account request could not be accepted.", "অ্যাকাউন্টের অনুরোধ গ্রহণ করা যায়নি।")
                         429 -> t("Too many attempts. Try again later.", "অনেকবার চেষ্টা হয়েছে। পরে আবার চেষ্টা করুন।")
                         else -> t("Request rejected. Please check your details.", "অনুরোধ গ্রহণ করা হয়নি। তথ্য পরীক্ষা করুন।")
                     }
-
                     else ->
                         t("Unable to complete request.", "অনুরোধ সম্পন্ন হয়নি।")
                 }
@@ -112,6 +119,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                 if (page == "AddMoneyRequest" && error is AccountFailure.Rejected && error.status in listOf(400, 409, 422)) {
                     addPayload = null; addKey = UUID.randomUUID().toString()
                     notice = if (error.status == 409) "A matching request may already exist. Check My Add Money Requests." else "Check the amount, payment method and note, then try again."
+                }
+                if (page == "AddMoneyHistory" && error is AccountFailure.Rejected && error.status in listOf(400, 409, 413, 415)) {
+                    notice = t("Receipt rejected. Check its type and size, or whether it was already submitted.", "রসিদ গ্রহণ করা হয়নি। ফাইলের ধরন, আকার বা পূর্বে জমা হয়েছে কি না পরীক্ষা করুন।")
                 }
                 if (api.token == null && signedIn) {
                     signedIn = false
@@ -127,6 +137,19 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
             }
         }
     }
+    val context = LocalContext.current
+    val receiptPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null && receiptRequestId.isNotEmpty()) {
+            val id = receiptRequestId
+            call({
+                val type = context.contentResolver.getType(uri)
+                val input = context.contentResolver.openInputStream(uri) ?: throw java.io.IOException("Receipt unavailable")
+                api.uploadReceipt(id, type, input)
+            }) {
+                notice = t("Receipt submitted for review. No wallet credit was made.", "রসিদ পর্যালোচনার জন্য জমা হয়েছে। ওয়ালেটে কোনো টাকা যোগ হয়নি।")
+            }
+        }
+    }
     fun loadPaymentMethods() {
         // Clear prior results before each read, including retries, so errors never show stale metadata.
         page = "PaymentMethods"; paymentMethods = emptyList(); methodsLoaded = false
@@ -136,7 +159,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
         }
     }
     LaunchedEffect(signedIn) {
-        if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray() }
+        if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletBalance = null; receiptRequestId = "" }
+        else call({ api.request("wallet") }) { response -> walletBalance = JSONObject(response).optString("balance").takeIf { it.isNotBlank() && it != "null" } }
     }
     MaterialTheme(colorScheme = Palette) {
         Scaffold { insets ->
@@ -183,7 +207,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 Card(colors = CardDefaults.cardColors(containerColor = Emerald), modifier = Modifier.fillMaxWidth()) {
                                     Column(Modifier.padding(24.dp)) {
                                         Text(t("Available balance • AED", "ব্যালেন্স • AED"), color = Color.White)
-                                        Text("—", style = MaterialTheme.typography.displayMedium, color = Color.White)
+                                        Text(walletBalance ?: "—", style = MaterialTheme.typography.displayMedium, color = Color.White)
                                     }
                                 }
                                 Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
@@ -224,7 +248,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             }
                             "AddMoneyRequest" -> {
                                 Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ"), style = MaterialTheme.typography.titleLarge)
-                                Text(t("Request only. No money moves or wallet credit. Do not include receipts, payment credentials or identity documents.", "শুধু অনুরোধ। অর্থ লেনদেন বা ওয়ালেটে জমা হবে না। রসিদ বা পরিচয়পত্র দেবেন না।"))
+                                Text(t("Request only. No money moves or wallet credit. Upload a receipt from request history; do not include credentials or identity documents.", "শুধু অনুরোধ। অর্থ লেনদেন বা ওয়ালেটে জমা হবে না। অনুরোধ তালিকা থেকে রসিদ জমা দিন; পেমেন্ট তথ্য বা পরিচয়পত্র দেবেন না।"))
                                 OutlinedTextField(addAmount, { addAmount = it.take(10) }, enabled = addPayload == null && !busy, label = { Text("Amount (AED)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                                 for (i in 0 until addMethods.length()) {
                                     val method = addMethods.getJSONObject(i)
@@ -253,6 +277,12 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
                                         Text(row.getString("id")); Text("AED " + row.getString("amount_aed") + " • " + row.getString("status"))
                                         Text(row.optString("payment_method_id")); Text(row.optString("created_at"))
+                                        if (row.optString("status") in listOf("pending", "under_review")) {
+                                            OutlinedButton(enabled = !busy, onClick = {
+                                                receiptRequestId = row.getString("id")
+                                                receiptPicker.launch(arrayOf("image/jpeg", "image/png", "application/pdf"))
+                                            }) { Text(t("Upload receipt (max 5 MB)", "রসিদ জমা দিন (সর্বোচ্চ ৫ এমবি)")) }
+                                        }
                                     } }
                                 }
                             }

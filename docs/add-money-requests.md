@@ -1,9 +1,10 @@
 # Add Money requests and review
 
-This feature records requests only. It does not process payments, accept receipts
-or identity documents, adjust balances, credit wallets, or remit money. A customer
-note is never proof of payment. The only statuses are pending, under_review,
-rejected and cancelled; none represents paid, verified, approved or credited.
+This feature records requests and receipts for admin review only. It does not
+process payments, accept identity documents, credit wallets, or remit money.
+A note or receipt is never proof of payment. Request statuses remain pending,
+under_review, rejected and cancelled. A separate receipt status records an
+admin's review; it does not authorize or perform a credit.
 
 ## Database and migration history
 
@@ -16,7 +17,9 @@ unique indexes for retry keys and identical active requests, and an event index.
 Migration 005 adds UAE payment accounts, Bangladesh payout banks and control
 audit events. Migration 006 adds a separate Add Money request-availability flag
 (defaulting existing methods to enabled) and prevents duplicate active payout
-bank names. Legacy rows without keys/references and their events remain intact.
+bank names. Migration 007 adds private receipt storage, receipt review events,
+and future financial authorization and credit records; it leaves the posting
+denial triggers intact. Legacy rows without keys/references and their events remain intact.
 Both migration entrypoints use the registry in backend/src/migrate.ts.
 
 `npm --prefix backend run migrate` uses DATABASE_URL. Apply only through the
@@ -38,6 +41,10 @@ support, rate and transaction endpoints keep their behavior.
 - GET /v1/add-money-requests: latest 100 owned Add Money requests.
 - GET /v1/add-money-requests/:id: owned request details; returns 404 for missing,
   another customer's, or a different request type's identifier.
+- PUT /v1/add-money-requests/:id/receipt: raw JPG, PNG or PDF bytes, maximum
+  5 MiB, with the corresponding content type. Only the owner of an open request
+  can upload. File hashes are unique across requests; identical retries for the
+  same request return the original receipt.
 
 Submission example:
 
@@ -52,7 +59,8 @@ An identical pending/under_review request with a new key also returns 409.
 Key scope is per authenticated customer. Unknown fields (including status,
 customer_id, receipt, currency or wallet credit) and multipart uploads are rejected.
 Customers cannot change status, edit or delete requests. Notes have no upload
-capability; clients must not include payment credentials, documents or receipts.
+capability; clients must not include payment credentials or identity documents.
+Receipts use the separate upload endpoint.
 
 Android freezes the submitted payload on an uncertain result and retries it with
 the same key. Definitive 400/409/422 responses allow correction; the UI advises
@@ -76,6 +84,19 @@ Every call rechecks the active user's admin role on the server.
   can return 409 if another identical active request exists.
 - GET /v1/admin/add-money-requests/:id/events: ordered review history with actor,
   previous/new status, optional review note and time. Customers cannot read it.
+- GET /v1/admin/users/:id/wallet: selected customer's ledger-derived AED balance;
+  no wallet returns null. Neither this route nor customer GET /v1/wallet enables posting.
+- GET /v1/admin/add-money-requests/:id/receipt: private, audited receipt download.
+- PATCH /v1/admin/add-money-requests/:id/receipt: expected/current receipt status,
+  optional note, and for `verified`, the verified amount and payment reference.
+  The admin assertion is not a payment or credit authorization.
+- GET /v1/admin/add-money-requests/:id/receipt-events: receipt review audit history.
+
+Uploads are validated by content signature and file parsing, but are not malware
+scanned. Bytes live in the database and are returned only to an admin; deployment
+must restrict database and backup access and ensure appropriate encryption at rest.
+The panel displays images and renders PDF pages locally without an interactive
+scripting layer.
 
 Each creation or status change inserts service_request_events and audit_logs in
 its database transaction. A no-op PATCH adds no event and does not alter a note.
@@ -91,22 +112,11 @@ to `BD`, and both `audit_logs` and `admin_control_events` record each change in
 the same transaction. These records do not trigger customer payment, wallet
 credit, or transfer behavior.
 
-## Review and validation
+## Financial boundary
 
-The feature branch includes the previously verified CI/Kotlin syntax fixes absent
-from main; these restore compilation without removing the newer authentication
-error handling. Android CI runs on pull requests and executes tests, lint and APK
-assembly. The configured API origin is a repository variable; validation locally
-uses https://example.invalid and never contacts production.
-
-Backend unit tests, read-only HTTP tests, original integration tests and new
-request integration tests pass. Upgrade tests preserve 003 request/event rows,
-apply 004, and re-run migrations idempotently. Concurrency tests verify one request
-per retry key and one winning admin review. No ledger, journal or transaction rows
-are created; direct posting still fails. Typecheck, admin build, workflow lint,
-Android project checks, eight Android unit tests, lint and APK assembly pass.
-A 390px Chromium check against the real local API verifies existing admin tabs,
-request review, audit events and customer-visible statuses.
-
-Source push and hosted CI remain dependent on repository write access. No hosted
-CI success or published PR should be inferred from local build success.
+The prepared credit service requires a separate financial authorization bound to
+the latest receipt review and uses balanced entries and unique request/reference
+records in a single transaction. No authorization or credit API is exposed.
+An unconditional application guard and the original database triggers continue
+to deny posting. Any future enablement requires a separately reviewed financial
+and payment-verification design; an admin receipt status alone is insufficient.

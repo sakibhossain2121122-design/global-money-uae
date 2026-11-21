@@ -1,6 +1,6 @@
 # Account API v1
 
-All payloads and responses are JSON. Requests with bodies require `Content-Type: application/json`. Body limit: 16 KiB. A successful login returns a cryptographically random bearer token; all subsequent account requests need `Authorization: Bearer TOKEN`. Tokens expire in eight hours. Errors return `{ "error": "..." }` with 400/401/403/404/413/415/429/500/503; never treat a failure as a completed account action.
+Except for receipt upload and download, payloads and responses are JSON. JSON requests require `Content-Type: application/json` and have a 16 KiB limit. A successful login returns a cryptographically random bearer token; all subsequent account requests need `Authorization: Bearer TOKEN`. Tokens expire in eight hours. Errors return `{ "error": "..." }` with 400/401/403/404/413/415/429/500/503; never treat a failure as a completed account action.
 
 | Method /v1 path | Body / result |
 | --- | --- |
@@ -9,7 +9,7 @@ All payloads and responses are JSON. Requests with bodies require `Content-Type:
 | POST auth/logout | `{}` → revokes current token |
 | GET me | current id, email, name, role |
 | PATCH me | `{name}` |
-| GET wallet | `{balance:null,currency:"AED",postingEnabled:false}` |
+| GET wallet | AED balance derived from ledger entries, as a decimal string; `null` when no customer wallet exists. `postingEnabled` is always `false`. |
 | GET rates | `{pair:"AED/BDT",value:null,available:false}` |
 | GET transactions | customer's stored statuses, latest 100; no seeded data |
 | GET/POST beneficiaries | list or create `{name,provider,account,bank?}` |
@@ -17,11 +17,30 @@ All payloads and responses are JSON. Requests with bodies require `Content-Type:
 | GET/POST support | list or create `{subject,message}` |
 | GET kyc | `{status:"unavailable",documentsAccepted:false}` |
 | GET admin/users | admin only: latest 100 account records without password hashes |
+| GET admin/users/:uuid/wallet | admin only: the selected customer's ledger-derived AED balance; `null` when no wallet exists |
 | PATCH admin/users | admin only: `{id,status:"active"|"suspended"}`; suspension deletes sessions; own suspension prohibited |
 | GET admin/support | admin only: latest 100 tickets |
 | PATCH admin/support | admin only: `{id,status:"open"|"in_progress"|"closed"}` |
 | GET admin/transactions | admin only: read-only status review |
 | GET/PUT admin/rates | admin only: configure `{value:"30.123456"}` for AED/BDT; never customer-visible |
+
+### Add Money receipts
+
+Submit an Add Money request first using `POST /v1/add-money-requests`. The owner
+can then `PUT /v1/add-money-requests/:uuid/receipt` with raw JPEG, PNG or PDF
+bytes and the matching content type, up to 5 MiB. The server validates signatures
+and parses the file; this is not malware scanning or proof of payment. Identical
+retries for the same request are idempotent. One receipt is permitted per request,
+and matching file hashes across requests return 409.
+
+Admins can retrieve an attachment through `GET /v1/admin/add-money-requests/:uuid/receipt`,
+record review through `PATCH` on that path with `{status,expected_status,note?,
+verified_amount_aed?,payment_reference?}`, and read the audit trail through
+`GET /v1/admin/add-money-requests/:uuid/receipt-events`. A `verified` review
+requires an amount and reference. The recorded status is an admin assertion,
+not financial authorization and not a credit. The panel renders PDF pages locally
+without an interactive scripting layer. Receipt bytes are stored in the database, not public files;
+database access, backups and encryption at rest must be restricted in deployment.
 
 ### Payment and payout administration
 

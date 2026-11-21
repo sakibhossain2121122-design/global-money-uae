@@ -5,6 +5,7 @@ import org.junit.Test
 import java.net.HttpURLConnection
 import java.net.URL
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 
 class PaymentMethodsApiTest {
     private class Connection(val status: Int, val body: String) : HttpURLConnection(URL("https://api.example/v1/payment-methods")) {
@@ -52,6 +53,36 @@ class PaymentMethodsApiTest {
             }
             assertEquals(if (status == 401) null else "test-session", api.token)
             assertTrue(connection.disconnected)
+        }
+    }
+    @Test fun receiptUploadUsesAuthenticatedBoundedBinaryRequest() {
+        val written = ByteArrayOutputStream()
+        val connection = object : HttpURLConnection(URL("https://api.example")) {
+            override fun connect() {}
+            override fun disconnect() {}
+            override fun usingProxy() = false
+            override fun getResponseCode() = 201
+            override fun getInputStream() = ByteArrayInputStream("{}".toByteArray())
+            override fun getOutputStream() = written
+        }
+        val api = AccountApi("https://api.example") { url ->
+            assertEquals("https://api.example/v1/add-money-requests/123/receipt", url.toString())
+            connection
+        }
+        api.token = "session"
+        assertEquals("{}", api.uploadReceipt("123", "image/png", ByteArrayInputStream(byteArrayOf(1, 2, 3))))
+        assertEquals("PUT", connection.requestMethod)
+        assertEquals("image/png", connection.getRequestProperty("Content-Type"))
+        assertEquals("Bearer session", connection.getRequestProperty("Authorization"))
+        assertArrayEquals(byteArrayOf(1, 2, 3), written.toByteArray())
+    }
+    @Test fun oversizedOrUnsupportedReceiptNeverOpensNetwork() {
+        val api = AccountApi("https://api.example") { fail("Unexpected network request"); throw AssertionError() }
+        for ((type, size) in listOf("image/png" to (5 * 1024 * 1024 + 1), "image/gif" to 1)) {
+            try {
+                api.uploadReceipt("123", type, ByteArrayInputStream(ByteArray(size)))
+                fail("Expected invalid receipt")
+            } catch (_: AccountFailure.InvalidReceipt) { }
         }
     }
 }

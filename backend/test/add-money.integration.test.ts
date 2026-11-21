@@ -17,7 +17,7 @@ async function request(path:string,method='GET',body?:unknown,bearer?:string){
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'6');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'7');
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  // Exercise an upgrade from 003 with existing request/event history, not just an empty database.
  for(const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql'])await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
@@ -26,7 +26,7 @@ try {
  const legacy=(await pool.query("INSERT INTO service_requests(customer_id,request_type,amount_aed) VALUES($1,'send_money',10) RETURNING id",[legacyCustomer])).rows[0].id;
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacy,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'6');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'7');
  assert.equal((await pool.query('SELECT status FROM service_requests WHERE id=$1',[legacy])).rows[0].status,'pending');
  assert.equal((await pool.query('SELECT count(*) FROM service_request_events WHERE request_id=$1',[legacy])).rows[0].count,'1');
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
@@ -102,6 +102,12 @@ try {
    assert.equal((await request('add-money-requests/'+legacy,'GET',undefined,alice)).status,404);
    assert.equal((await request('admin/add-money-requests/'+legacy,'PATCH',{status:'rejected',expected_status:'pending'},admin)).status,404);
   });
+  if(process.env.TEST_LOOPBACK_ONLY==='1' && child) {
+   child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');
+   child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
+   child.stderr?.on('data',()=>{});
+   let ready=false;for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3108/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready);
+  }
   await t.test('admin Add Money, UAE account and Bangladesh bank controls are authorized and audited',async()=>{
    for(const path of ['payment-methods','payment-accounts','payout-banks']){
     assert.equal((await request('admin/'+path)).status,401);
@@ -205,11 +211,20 @@ try {
  });
  await test('HTTP rate limit returns 429 to a client exceeding the shared request budget',async()=>{
   const clientAddress='127.0.255.254';
-  for(let i=0;i<100;i++){
-   assert.equal((await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress)).status,200);
-  }
-  const limited=await requestJson('http://127.0.0.1:3108/health','GET',undefined,undefined,clientAddress);
-  assert.equal(limited.status,429);
-  assert.deepEqual(limited.body,{error:'Too many requests'});
+  const loopbackOnly=process.env.TEST_LOOPBACK_ONLY==='1';
+  const isolated=loopbackOnly?spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3110'},stdio:['ignore','ignore','pipe']}):undefined;
+  isolated?.stderr?.on('data',()=>{});
+  const health=`http://127.0.0.1:${loopbackOnly?'3110':'3108'}/health`;
+  try {
+   if(isolated) {
+    let ready=false;for(let n=0;n<50;n++){try{if((await fetch(health)).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready);
+   }
+   for(let i=0;i<(loopbackOnly?99:100);i++){
+    assert.equal((await requestJson(health,'GET',undefined,undefined,clientAddress)).status,200);
+   }
+   const limited=await requestJson(health,'GET',undefined,undefined,clientAddress);
+   assert.equal(limited.status,429);
+   assert.deepEqual(limited.body,{error:'Too many requests'});
+  } finally {if(isolated){isolated.kill('SIGTERM');if(isolated.exitCode===null)await once(isolated,'exit');}}
  });
 }finally{if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}await pool.end();}

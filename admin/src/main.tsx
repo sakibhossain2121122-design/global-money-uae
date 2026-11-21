@@ -1,5 +1,7 @@
-import React, {useState} from 'react';
+import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
+import {ReceiptReview, WalletView} from './WalletReview';
+import {ReceiptPreview} from './ReceiptPreview';
 import './style.css';
 
 type Row = Record<string, unknown>;
@@ -34,12 +36,20 @@ function App() {
  const [bankName,setBankName]=useState('');
  const [events,setEvents]=useState<Row[]>([]),[eventRequest,setEventRequest]=useState('');
  const [reviewNotes,setReviewNotes]=useState<Record<string,string>>({});
+ const [wallet,setWallet]=useState<{name:string; balance:string|null; currency:string; postingEnabled:boolean}|null>(null);
+ const [receiptEvents,setReceiptEvents]=useState<Row[]>([]),[receiptRequest,setReceiptRequest]=useState('');
+ const [receipt,setReceipt]=useState<{url:string;type:string;requestId:string;customerName:string}|null>(null);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false);
+ useEffect(()=>()=>{if(receipt)URL.revokeObjectURL(receipt.url);},[receipt]);
+ function clearSession() {
+  setToken('');setRows([]);setMethods([]);setWallet(null);setReceipt(null);
+  setReceiptEvents([]);setReceiptRequest('');setEvents([]);setEventRequest('');
+ }
 
  async function api<T=unknown>(path:string,method='GET',body?:unknown,bearer=token):Promise<T> {
   const r=await fetch('/v1/'+path,{method,headers:{'Content-Type':'application/json',...(bearer?{Authorization:'Bearer '+bearer}:{})},body:body===undefined?undefined:JSON.stringify(body),credentials:'omit',cache:'no-store'});
   if(!r.ok){
-   if(r.status===401){setToken('');setRows([]);setMethods([]);}
+   if(r.status===401||r.status===403)clearSession();
    throw new Error(r.status===403?'Administrator access required.':r.status===409?'A conflicting record already exists or the request changed. Refresh and try again.':'Request failed ('+r.status+').');
   }
   return await r.json() as T;
@@ -61,7 +71,7 @@ function App() {
    if(!account.payment_method_id && available.length) setAccount({...account,payment_method_id:String(available[0].id)});
   }
  }
- function changeTab(value:Tab) {void perform(async()=>{setEvents([]);setEventRequest('');await load(value);});}
+ function changeTab(value:Tab) {void perform(async()=>{setEvents([]);setEventRequest('');setWallet(null);setReceiptEvents([]);setReceiptRequest('');setReceipt(null);await load(value);});}
  async function refresh() {await load();setEvents([]);setEventRequest('');}
 
  return <main><header><span className="mark">GM</span><div><h1>GLOBAL MONEY UAE</h1><p>Administration • Restricted access</p></div></header>
@@ -75,10 +85,10 @@ function App() {
   const data=await api<Row[]>('admin/users','GET',undefined,session.token);
   setToken(session.token);setRows(data);setEmail('');setTab('users');
  });}}><h2>Sign in</h2><label>Email<input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)}/></label><button disabled={busy}>Sign in</button></form> : <>
- <nav>{(['users','support','transactions','rates','add-money','add-money-requests','payment-accounts','payout-banks'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});setToken('');setRows([]);setMethods([]);})}>Logout</button></nav>
+ <nav>{(['users','support','transactions','rates','add-money','add-money-requests','payment-accounts','payout-banks'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});clearSession();})}>Logout</button></nav>
  <section><h2>{headings[tab]}</h2>
  {tab==='add-money'&&<><p>Controls which AED payment methods customers may select for a review-only Add Money request. This does not enable payment collection or wallet credit.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh methods</button></>}
- {tab==='add-money-requests'&&<><p>Request review only. No payment verification, wallet credit or balance adjustment. Never treat a note as proof of payment.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
+ {tab==='add-money-requests'&&<><p>Admin receipt review is recorded for investigation only. It does not authorize payment or wallet credit. Never treat a note or receipt alone as proof of payment.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
  {tab==='payment-accounts'&&<><p>UAE payment account directory. Administrative status does not activate payment processing.</p><form onSubmit={e=>{e.preventDefault();if(!account.account_number.trim()&&!account.iban.trim()){setError('Enter an account number or an IBAN.');return;}void perform(async()=>{
   await api('admin/payment-accounts','POST',account);
   setAccount({...account,account_holder:'',account_number:'',iban:'',instructions:''});
@@ -90,13 +100,27 @@ function App() {
   const id=String(row.id??i),archived=row.archived_at!==null&&row.archived_at!==undefined;
   return <tr key={id}>{Object.keys(rows[0]).map(key=><td key={key} data-label={key}>{tab==='payment-accounts'&&(key==='account_number'||key==='iban')?mask(row[key]):display(row[key])}</td>)}
   {tab==='add-money'&&<td data-label="Request availability"><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/payment-methods','PATCH',{id:row.id,add_money_request_enabled:!row.add_money_request_enabled});await load();})}>{row.add_money_request_enabled?'Disable requests':'Allow requests'}</button></td>}
-  {tab==='add-money-requests'&&<td data-label="Review"><label>Review note<input maxLength={500} value={reviewNotes[id]??''} onChange={e=>setReviewNotes({...reviewNotes,[id]:e.target.value})}/></label><select disabled={busy} aria-label={'Request status '+id} value={String(row.status)} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/add-money-requests/'+id,'PATCH',{status,expected_status:row.status,note:reviewNotes[id]??''});setEvents([]);setEventRequest('');await load();});}}>{['pending','under_review','rejected','cancelled'].map(value=><option key={value}>{value}</option>)}</select><button disabled={busy} onClick={()=>void perform(async()=>{setEvents(await api<Row[]>('admin/add-money-requests/'+id+'/events'));setEventRequest(id);})}>View audit events</button></td>}
-  {tab==='users'&&<td data-label="Action"><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}
+  {tab==='add-money-requests'&&<td data-label="Review"><label>Review note<input maxLength={500} value={reviewNotes[id]??''} onChange={e=>setReviewNotes({...reviewNotes,[id]:e.target.value})}/></label><select disabled={busy} aria-label={'Request status '+id} value={String(row.status)} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/add-money-requests/'+id,'PATCH',{status,expected_status:row.status,note:reviewNotes[id]??''});setEvents([]);setEventRequest('');await load();});}}>{['pending','under_review','rejected','cancelled'].map(value=><option key={value}>{value}</option>)}</select><button disabled={busy} onClick={()=>void perform(async()=>{setEvents(await api<Row[]>('admin/add-money-requests/'+id+'/events'));setEventRequest(id);})}>View audit events</button>
+   {Boolean(row.receipt_id)&&<ReceiptReview status={String(row.verification_status)} busy={busy} onReview={input=>void perform(async()=>{await api('admin/add-money-requests/'+id+'/receipt','PATCH',input);setReceiptEvents([]);setReceiptRequest('');await load();})}
+    onHistory={()=>void perform(async()=>{setReceiptEvents(await api<Row[]>('admin/add-money-requests/'+id+'/receipt-events'));setReceiptRequest(id);})}
+    onView={()=>void perform(async()=>{
+     const response=await fetch('/v1/admin/add-money-requests/'+id+'/receipt',{headers:{Authorization:'Bearer '+token},credentials:'omit',cache:'no-store'});
+     if(!response.ok){if(response.status===401||response.status===403)clearSession();throw new Error('Receipt could not be opened ('+response.status+').');}
+     const bytes=await response.arrayBuffer();
+     const type=String(row.receipt_content_type);
+     if(!['image/png','image/jpeg','application/pdf'].includes(type))throw new Error('Unsupported receipt type.');
+     setReceipt({url:URL.createObjectURL(new Blob([bytes],{type})),type,requestId:id,customerName:String(row.customer_name)});
+    })}/>}
+  </td>}
+  {tab==='users'&&<td data-label="Action"><button disabled={busy} onClick={()=>void perform(async()=>{const data=await api<{balance:string|null;currency:string;postingEnabled:boolean}>('admin/users/'+id+'/wallet');setWallet({name:String(row.name),...data});})}>View wallet</button><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}
   {tab==='support'&&<td data-label="Action"><select disabled={busy} aria-label={'Ticket status '+id} value={String(row.status)} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/support','PATCH',{id,status});await load();});}}>{['open','in_progress','closed'].map(status=><option key={status}>{status}</option>)}</select></td>}
   {['payment-accounts','payout-banks'].includes(tab)&&<td data-label="Action">{archived?<span>Archived</span>:<><button disabled={busy} onClick={()=>void perform(async()=>{const path=tab==='payment-accounts'?'payment-accounts':'payout-banks';await api('admin/'+path,'PATCH',{id,enabled:!row.enabled});await load();})}>{row.enabled?'Disable':'Enable record'}</button><button className="secondary" disabled={busy} onClick={()=>void perform(async()=>{if(!window.confirm('Archive this record?'))return;const path=tab==='payment-accounts'?'payment-accounts':'payout-banks';await api('admin/'+path+'/'+id,'DELETE');await load();})}>Archive</button></>}</td>}
   </tr>;
  })}</tbody></table></div>}
  {tab==='add-money-requests'&&eventRequest&&<div aria-live="polite"><h3>Audit events • {eventRequest}</h3>{events.map(event=><p key={String(event.id)}>{display(event.created_at)} • {display(event.previous_status)} → {display(event.new_status)} • {display(event.actor_id)} {event.note?'• '+String(event.note):null}</p>)}</div>}
+ {tab==='users'&&wallet&&<WalletView name={wallet.name} wallet={wallet}/>}
+ {tab==='add-money-requests'&&receipt&&<section><h3>Receipt preview: {receipt.customerName} • {receipt.requestId}</h3><button onClick={()=>setReceipt(null)}>Close preview</button><ReceiptPreview key={receipt.url} url={receipt.url} type={receipt.type}/></section>}
+ {tab==='add-money-requests'&&receiptRequest&&<div aria-live="polite"><h3>Receipt audit history • {receiptRequest}</h3>{receiptEvents.map(event=><p key={String(event.id)}>{display(event.created_at)} • {display(event.verification_status)} • {display(event.actor_id)} • AED {display(event.verified_amount_aed)} • {display(event.payment_reference)} • {display(event.note)}</p>)}</div>}
  <p>Most recent 100 records. Transactions are read only.</p></section></>}
  <footer>Tokens stay in memory. Closing or reloading this page requires signing in again.</footer></main>;
 }

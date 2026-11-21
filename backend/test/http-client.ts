@@ -18,7 +18,7 @@ export function requestJson(
  return new Promise<{status:number;body:any}>((resolve,reject)=>{
   const headers:Record<string,string>={'Content-Type':'application/json'};
   if(bearer)headers.Authorization='Bearer '+bearer;
-  const request=httpRequest(url,{method,headers,localAddress},response=>{
+  const request=httpRequest(url,{method,headers,localAddress:process.env.TEST_LOOPBACK_ONLY==='1'?'127.0.0.1':localAddress},response=>{
    response.setEncoding('utf8');
    let data='';
    response.on('data',(chunk:string)=>data+=chunk);

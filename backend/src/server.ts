@@ -2,6 +2,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import pg from 'pg';
 import {submission,review} from './add-money.ts';
 import { validateAccount, validateAddMoneyMethod, validateBankName, validateEnabledToggle } from './admin-control.ts';
+import { readReceipt, receiptReview } from './receipts.ts';
+import { walletBalance } from './wallet.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -36,7 +38,7 @@ const server = createServer(async (req,res) => {
       [actor,action,target]
     );
   };
-  let result: unknown; let status=200;
+  let result: unknown; let status=200; let attachment: Buffer | null = null;
   if (method==='POST' && ['/v1/auth/register','/v1/auth/login'].includes(path)) {
    if (!authLimiter.allow(req.socket.remoteAddress ?? 'unknown')) throw new ApiError(429,'Too many attempts');
    const b=await body(req); const mail=email(b.email); const pass=password(b.password);
@@ -63,7 +65,7 @@ const server = createServer(async (req,res) => {
    if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
    else if(method==='GET' && path==='/v1/me') result=user;
    else if(method==='PATCH' && path==='/v1/me') {const b=await body(req);await c.query('UPDATE customers SET name=$1 WHERE id=$2',[text(b.name),actor]);await audit('profile.update');result={ok:true};}
-   else if(method==='GET' && path==='/v1/wallet') result={balance:null,currency:'AED',postingEnabled:false};
+   else if(method==='GET' && path==='/v1/wallet') result=await walletBalance(c,user.id);
    else if(method==='GET' && path==='/v1/rates') result={pair:'AED/BDT',value:null,available:false};
    else if(method==='GET' && path==='/v1/kyc') result={status:'unavailable',documentsAccepted:false};
    else if(method==='GET' && path==='/v1/transactions') result=(await c.query('SELECT id,status,created_at FROM transactions WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
@@ -98,8 +100,60 @@ const server = createServer(async (req,res) => {
     const id=uuid(path.split('/').pop());
     const row=(await c.query("SELECT id,amount_aed,payment_method_id,customer_note,status,created_at,updated_at FROM service_requests WHERE id=$1 AND customer_id=$2 AND request_type='add_money'",[id,actor])).rows[0];
     if(!row)throw new ApiError(404,'Request not found');result=row;
+   } else if(method==='PUT' && /^\/v1\/add-money-requests\/[0-9a-f-]{36}\/receipt$/.test(path)) {
+    const id=uuid(path.split('/')[3]);
+    const request=(await c.query("SELECT id,status,payment_method_id FROM service_requests WHERE id=$1 AND customer_id=$2 AND request_type='add_money' FOR UPDATE",[id,actor])).rows[0];
+    if(!request)throw new ApiError(404,'Request not found');
+    if(!['pending','under_review'].includes(request.status))throw new ApiError(409,'Request is not open for receipt upload');
+    if(!request.payment_method_id)throw new ApiError(409,'Request has no payment method');
+    const receipt=await readReceipt(req);
+    const existing=(await c.query('SELECT id,sha256,content_type,verification_status FROM add_money_receipts WHERE request_id=$1',[id])).rows[0];
+    if(existing) {
+     if(existing.sha256!==receipt.sha256 || existing.content_type!==receipt.contentType)throw new ApiError(409,'A receipt is already attached');
+     result={id:existing.id,verificationStatus:existing.verification_status,postingEnabled:false};
+    } else {
+     const inserted=(await c.query(`INSERT INTO add_money_receipts(request_id,payment_method_id,content_type,content,sha256)
+       VALUES($1,$2,$3,$4,$5) RETURNING id`,[id,request.payment_method_id,receipt.contentType,receipt.content,receipt.sha256])).rows[0];
+     await c.query("INSERT INTO add_money_receipt_events(receipt_id,actor_id,verification_status) VALUES($1,$2,'pending')",[inserted.id,actor]);
+     await audit('add_money_receipt.uploaded',id);
+     result={id:inserted.id,verificationStatus:'pending',postingEnabled:false};status=201;
+    }
    } else if(method==='GET' && path==='/v1/admin/add-money-requests') {
-    result=(await c.query("SELECT id,customer_id,amount_aed,payment_method_id,customer_note,status,admin_note,reviewed_by,reviewed_at,created_at FROM service_requests WHERE request_type='add_money' ORDER BY created_at DESC,id LIMIT 100")).rows;
+    result=(await c.query(`SELECT r.id,r.customer_id,c.name AS customer_name,r.amount_aed,r.payment_method_id,
+     r.customer_note,r.status,r.admin_note,r.reviewed_by,r.reviewed_at,r.created_at,
+     receipt.id AS receipt_id,receipt.content_type AS receipt_content_type,receipt.verification_status,
+     receipt.verified_amount_aed,receipt.payment_reference
+     FROM service_requests r JOIN customers c ON c.id=r.customer_id
+     LEFT JOIN add_money_receipts receipt ON receipt.request_id=r.id
+     WHERE r.request_type='add_money' ORDER BY r.created_at DESC,r.id LIMIT 100`)).rows;
+   } else if(method==='GET' && /^\/v1\/admin\/users\/[0-9a-f-]{36}\/wallet$/.test(path)) {
+    const id=uuid(path.split('/')[4]);
+    if(!(await c.query('SELECT id FROM customers WHERE id=$1',[id])).rowCount)throw new ApiError(404,'Customer not found');
+    result=await walletBalance(c,id);
+    await audit('admin.wallet.view',id);
+   } else if(method==='GET' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}\/receipt$/.test(path)) {
+    const id=uuid(path.split('/')[4]);
+    const receipt=(await c.query('SELECT content FROM add_money_receipts WHERE request_id=$1',[id])).rows[0];
+    if(!receipt)throw new ApiError(404,'Receipt not found');
+    attachment=receipt.content;
+    await audit('admin.add_money_receipt.viewed',id);
+   } else if(method==='GET' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}\/receipt-events$/.test(path)) {
+    const id=uuid(path.split('/')[4]);
+    const receipt=(await c.query('SELECT id FROM add_money_receipts WHERE request_id=$1',[id])).rows[0];
+    if(!receipt)throw new ApiError(404,'Receipt not found');
+    result=(await c.query('SELECT id,actor_id,verification_status,verified_amount_aed,payment_reference,note,created_at FROM add_money_receipt_events WHERE receipt_id=$1 ORDER BY id',[receipt.id])).rows;
+   } else if(method==='PATCH' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}\/receipt$/.test(path)) {
+    const id=uuid(path.split('/')[4]), data=receiptReview(await body(req));
+    const receipt=(await c.query('SELECT id,verification_status FROM add_money_receipts WHERE request_id=$1 FOR UPDATE',[id])).rows[0];
+    if(!receipt)throw new ApiError(404,'Receipt not found');
+    if(receipt.verification_status!==data.expected)throw new ApiError(409,'Receipt changed; refresh before reviewing');
+    await c.query(`UPDATE add_money_receipts SET verification_status=$1,verified_amount_aed=$2,payment_reference=$3,
+      review_note=$4,reviewed_by=$5,reviewed_at=now() WHERE id=$6`,
+      [data.status,data.verifiedAmount,data.reference,data.note,actor,receipt.id]);
+    await c.query(`INSERT INTO add_money_receipt_events(receipt_id,actor_id,verification_status,verified_amount_aed,payment_reference,note)
+      VALUES($1,$2,$3,$4,$5,$6)`,[receipt.id,actor,data.status,data.verifiedAmount,data.reference,data.note]);
+    await audit('admin.add_money_receipt.'+data.status,id);
+    result={id:receipt.id,verificationStatus:data.status,postingEnabled:false};
    } else if(method==='GET' && /^\/v1\/admin\/add-money-requests\/[0-9a-f-]{36}\/events$/.test(path)) {
     const id=uuid(path.split('/')[4]);
     const found=await c.query("SELECT id FROM service_requests WHERE id=$1 AND request_type='add_money'",[id]);
@@ -258,15 +312,20 @@ const server = createServer(async (req,res) => {
   )).rows.map(({ enabled, ...method }) => ({ ...method, enabled: false }));
 } else throw new ApiError(404,'Not found');
   }
-  await c.query('COMMIT');send(res,status,result);
+  await c.query('COMMIT');
+  if(attachment) {
+   res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Disposition':'attachment; filename="receipt"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'; sandbox",'Strict-Transport-Security':'max-age=31536000'});
+   res.end(attachment);
+  } else send(res,status,result);
  } catch(e) {
   await c.query('ROLLBACK').catch(()=>{});
   const conflict=typeof e==='object' && e!==null && 'code' in e && e.code==='23505';
   const duplicatePayoutBank=typeof e==='object' && e!==null && 'constraint' in e && e.constraint==='payout_banks_active_name';
+  const duplicateReceipt=typeof e==='object' && e!==null && 'constraint' in e && ['add_money_receipts_sha256_key','add_money_verified_reference'].includes(String(e.constraint));
   const status=e instanceof ApiError?e.status:conflict?409:500;
   // Never log passwords, tokens, beneficiary accounts, request bodies or raw SQL errors.
   console.error(JSON.stringify({event:'request.rejected',actor,status}));
-  send(res,status,{error:e instanceof ApiError?e.message:duplicatePayoutBank?'Payout bank already exists':conflict?'An identical request is already pending review':'Request could not be completed'});
+  send(res,status,{error:e instanceof ApiError?e.message:duplicatePayoutBank?'Payout bank already exists':duplicateReceipt?'Receipt or payment reference already used':conflict?'An identical request is already pending review':'Request could not be completed'});
  } finally {c.release();}
 });
 server.requestTimeout=15000;server.headersTimeout=10000;
