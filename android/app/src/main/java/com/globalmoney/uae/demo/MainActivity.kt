@@ -153,7 +153,14 @@ result.mapCatching { done(it) }.onFailure { error ->
         modifier = Modifier.fillMaxWidth(),
         singleLine = true
     )
-                      }  if (register) Field(name, { name = it }, t("Full name", "পুরো নাম"))
+                      }
+if (register) {
+    Field(
+        name,
+        { name = it },
+        t("Full name", "পুরো নাম")
+    )
+}
                         OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(
     value = password,
