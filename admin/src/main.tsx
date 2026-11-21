@@ -2,11 +2,12 @@ import React, {useEffect, useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import {ReceiptReview, WalletView} from './WalletReview';
 import {ReceiptPreview} from './ReceiptPreview';
+import {SendMoneyReview} from './SendMoneyReview';
 import './style.css';
 
 type Row = Record<string, unknown>;
 type Tab = 'users' | 'support' | 'transactions' | 'rates' | 'add-money' |
-  'add-money-requests' | 'payment-accounts' | 'payout-banks';
+  'add-money-requests' | 'send-money-requests' | 'payment-accounts' | 'payout-banks';
 
 const headings: Record<Tab, string> = {
  users:'Users',
@@ -15,6 +16,7 @@ const headings: Record<Tab, string> = {
  rates:'Rates',
  'add-money':'Add Money',
  'add-money-requests':'Add Money Requests',
+ 'send-money-requests':'Send Money Requests',
  'payment-accounts':'UAE Payment Accounts',
  'payout-banks':'Bangladesh Payout Banks'
 };
@@ -36,7 +38,9 @@ function App() {
  const [bankName,setBankName]=useState('');
  const [events,setEvents]=useState<Row[]>([]),[eventRequest,setEventRequest]=useState('');
  const [reviewNotes,setReviewNotes]=useState<Record<string,string>>({});
- const [wallet,setWallet]=useState<{name:string; balance:string|null; currency:string; postingEnabled:boolean}|null>(null);
+ const [wallet,setWallet]=useState<{name:string; balance:string|null; heldBalance:string|null; availableBalance:string|null; currency:string; postingEnabled:boolean}|null>(null);
+ const [sendHistory,setSendHistory]=useState<{request:string;reviews:Row[];references:Row[];recipientReviews:Row[];reconciliations:Row[];resolutions:Row[];resolutionApprovals:Row[]}|null>(null);
+ const [sendRecipient,setSendRecipient]=useState<{request:string;details:Row}|null>(null);
  const [receiptEvents,setReceiptEvents]=useState<Row[]>([]),[receiptRequest,setReceiptRequest]=useState('');
  const [receipt,setReceipt]=useState<{url:string;type:string;requestId:string;customerName:string}|null>(null);
  const [error,setError]=useState(''),[busy,setBusy]=useState(false);
@@ -44,6 +48,7 @@ function App() {
  function clearSession() {
   setToken('');setRows([]);setMethods([]);setWallet(null);setReceipt(null);
   setReceiptEvents([]);setReceiptRequest('');setEvents([]);setEventRequest('');
+  setSendHistory(null);setSendRecipient(null);
  }
 
  async function api<T=unknown>(path:string,method='GET',body?:unknown,bearer=token):Promise<T> {
@@ -71,7 +76,7 @@ function App() {
    if(!account.payment_method_id && available.length) setAccount({...account,payment_method_id:String(available[0].id)});
   }
  }
- function changeTab(value:Tab) {void perform(async()=>{setEvents([]);setEventRequest('');setWallet(null);setReceiptEvents([]);setReceiptRequest('');setReceipt(null);await load(value);});}
+ function changeTab(value:Tab) {void perform(async()=>{setEvents([]);setEventRequest('');setWallet(null);setReceiptEvents([]);setReceiptRequest('');setReceipt(null);setSendHistory(null);setSendRecipient(null);await load(value);});}
  async function refresh() {await load();setEvents([]);setEventRequest('');}
 
  return <main><header><span className="mark">GM</span><div><h1>GLOBAL MONEY UAE</h1><p>Administration • Restricted access</p></div></header>
@@ -85,10 +90,11 @@ function App() {
   const data=await api<Row[]>('admin/users','GET',undefined,session.token);
   setToken(session.token);setRows(data);setEmail('');setTab('users');
  });}}><h2>Sign in</h2><label>Email<input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)}/></label><button disabled={busy}>Sign in</button></form> : <>
- <nav>{(['users','support','transactions','rates','add-money','add-money-requests','payment-accounts','payout-banks'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});clearSession();})}>Logout</button></nav>
+ <nav>{(['users','support','transactions','rates','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});clearSession();})}>Logout</button></nav>
  <section><h2>{headings[tab]}</h2>
  {tab==='add-money'&&<><p>Controls which AED payment methods customers may select for a review-only Add Money request. This does not enable payment collection or wallet credit.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh methods</button></>}
  {tab==='add-money-requests'&&<><p>Admin receipt review is recorded for investigation only. It does not authorize payment or wallet credit. Never treat a note or receipt alone as proof of payment.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
+ {tab==='send-money-requests'&&<><p>Review-only requests reserve ledger funds. Admin reports do not independently verify recipients or payouts. Transfer, payout, and success remain disabled.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
  {tab==='payment-accounts'&&<><p>UAE payment account directory. Administrative status does not activate payment processing.</p><form onSubmit={e=>{e.preventDefault();if(!account.account_number.trim()&&!account.iban.trim()){setError('Enter an account number or an IBAN.');return;}void perform(async()=>{
   await api('admin/payment-accounts','POST',account);
   setAccount({...account,account_holder:'',account_number:'',iban:'',instructions:''});
@@ -96,7 +102,7 @@ function App() {
  });}}><h3>Add payment account</h3><label>Payment method<select required value={account.payment_method_id} onChange={e=>setAccount({...account,payment_method_id:e.target.value})}><option value="" disabled>Select AED method</option>{methods.map(method=><option key={String(method.id)} value={String(method.id)}>{display(method.name)}</option>)}</select></label><label>Account holder<input required maxLength={150} value={account.account_holder} onChange={e=>setAccount({...account,account_holder:e.target.value})}/></label><label>Account number<input autoComplete="off" maxLength={50} value={account.account_number} onChange={e=>setAccount({...account,account_number:e.target.value})}/></label><label>IBAN<input autoComplete="off" maxLength={34} value={account.iban} onChange={e=>setAccount({...account,iban:e.target.value.toUpperCase()})}/></label><label>Instructions<input maxLength={500} value={account.instructions} onChange={e=>setAccount({...account,instructions:e.target.value})}/></label><button disabled={busy||methods.length===0}>Add account (disabled by default)</button></form></>}
  {tab==='payout-banks'&&<><p>Bangladesh payout bank directory only. Bank entries do not initiate or authorize transfers.</p><form onSubmit={e=>{e.preventDefault();void perform(async()=>{await api('admin/payout-banks','POST',{name:bankName});setBankName('');await load();});}}><h3>Add Bangladesh bank</h3><label>Bank name<input required maxLength={120} value={bankName} onChange={e=>setBankName(e.target.value)}/></label><button disabled={busy}>Add bank (disabled by default)</button></form></>}
  {tab==='rates'&&<form onSubmit={e=>{e.preventDefault();void perform(async()=>{await api('admin/rates','PUT',{value:rate});setRate('');await load();});}}><p>Internal AED/BDT configuration only. Customer rates remain unavailable.</p><label>Rate<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,6})?" value={rate} required onChange={e=>setRate(e.target.value)}/></label><button disabled={busy}>Save configuration</button></form>}
- {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money','add-money-requests','payment-accounts','payout-banks'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=>{
+ {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=>{
   const id=String(row.id??i),archived=row.archived_at!==null&&row.archived_at!==undefined;
   return <tr key={id}>{Object.keys(rows[0]).map(key=><td key={key} data-label={key}>{tab==='payment-accounts'&&(key==='account_number'||key==='iban')?mask(row[key]):display(row[key])}</td>)}
   {tab==='add-money'&&<td data-label="Request availability"><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/payment-methods','PATCH',{id:row.id,add_money_request_enabled:!row.add_money_request_enabled});await load();})}>{row.add_money_request_enabled?'Disable requests':'Allow requests'}</button></td>}
@@ -112,7 +118,20 @@ function App() {
      setReceipt({url:URL.createObjectURL(new Blob([bytes],{type})),type,requestId:id,customerName:String(row.customer_name)});
     })}/>}
   </td>}
-  {tab==='users'&&<td data-label="Action"><button disabled={busy} onClick={()=>void perform(async()=>{const data=await api<{balance:string|null;currency:string;postingEnabled:boolean}>('admin/users/'+id+'/wallet');setWallet({name:String(row.name),...data});})}>View wallet</button><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}
+  {tab==='send-money-requests'&&<td data-label="Review"><SendMoneyReview status={String(row.status)} holdStatus={String(row.hold_status)} payoutReference={typeof row.payout_reference==='string'?row.payout_reference:null} busy={busy}
+   recipientEventId={String(row.recipient_event_id)} recipientStatus={typeof row.recipient_review_status==='string'?row.recipient_review_status:null}
+   reconciliationEventId={String(row.reconciliation_event_id)} reconciliationStatus={typeof row.reconciliation_status==='string'?row.reconciliation_status:null}
+   resolutionEventId={String(row.resolution_event_id)} resolutionStatus={typeof row.resolution_status==='string'?row.resolution_status:null}
+   resolutionProposer={typeof row.resolution_proposed_by==='string'?row.resolution_proposed_by:null}
+   resolutionApprover={typeof row.resolution_approved_by==='string'?row.resolution_approved_by:null}
+   onReview={input=>void perform(async()=>{await api('admin/send-money-requests/'+id,'PATCH',input);setSendHistory(null);await load();})}
+   onReference={reference=>void perform(async()=>{await api('admin/send-money-requests/'+id+'/payout-reference','PUT',{payout_reference:reference});setSendHistory(null);await load();})}
+   onRecipient={()=>void perform(async()=>{setSendRecipient(null);const details=await api<Row>('admin/send-money-requests/'+id+'/recipient');setSendRecipient({request:id,details});})}
+   onRecipientReview={input=>void perform(async()=>{await api('admin/send-money-requests/'+id+'/recipient-review','POST',input);setSendHistory(null);await load();})}
+   onReconciliation={input=>void perform(async()=>{await api('admin/send-money-requests/'+id+'/reconciliation','POST',input);setSendHistory(null);await load();})}
+   onResolve={input=>void perform(async()=>{await api('admin/send-money-requests/'+id+'/reconciliation-resolution','POST',input);setSendHistory(null);await load();})}
+   onHistory={()=>void perform(async()=>{const history=await api<{reviews:Row[];references:Row[];recipientReviews:Row[];reconciliations:Row[];resolutions:Row[];resolutionApprovals:Row[]}>('admin/send-money-requests/'+id+'/events');setSendHistory({request:id,...history});})}/></td>}
+  {tab==='users'&&<td data-label="Action"><button disabled={busy} onClick={()=>void perform(async()=>{const data=await api<{balance:string|null;heldBalance:string|null;availableBalance:string|null;currency:string;postingEnabled:boolean}>('admin/users/'+id+'/wallet');setWallet({name:String(row.name),...data});})}>View wallet</button><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/users','PATCH',{id:row.id,status:row.status==='active'?'suspended':'active'});await load();})}>{row.status==='active'?'Suspend':'Activate'}</button></td>}
   {tab==='support'&&<td data-label="Action"><select disabled={busy} aria-label={'Ticket status '+id} value={String(row.status)} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/support','PATCH',{id,status});await load();});}}>{['open','in_progress','closed'].map(status=><option key={status}>{status}</option>)}</select></td>}
   {['payment-accounts','payout-banks'].includes(tab)&&<td data-label="Action">{archived?<span>Archived</span>:<><button disabled={busy} onClick={()=>void perform(async()=>{const path=tab==='payment-accounts'?'payment-accounts':'payout-banks';await api('admin/'+path,'PATCH',{id,enabled:!row.enabled});await load();})}>{row.enabled?'Disable':'Enable record'}</button><button className="secondary" disabled={busy} onClick={()=>void perform(async()=>{if(!window.confirm('Archive this record?'))return;const path=tab==='payment-accounts'?'payment-accounts':'payout-banks';await api('admin/'+path+'/'+id,'DELETE');await load();})}>Archive</button></>}</td>}
   </tr>;
@@ -121,6 +140,8 @@ function App() {
  {tab==='users'&&wallet&&<WalletView name={wallet.name} wallet={wallet}/>}
  {tab==='add-money-requests'&&receipt&&<section><h3>Receipt preview: {receipt.customerName} • {receipt.requestId}</h3><button onClick={()=>setReceipt(null)}>Close preview</button><ReceiptPreview key={receipt.url} url={receipt.url} type={receipt.type}/></section>}
  {tab==='add-money-requests'&&receiptRequest&&<div aria-live="polite"><h3>Receipt audit history • {receiptRequest}</h3>{receiptEvents.map(event=><p key={String(event.id)}>{display(event.created_at)} • {display(event.verification_status)} • {display(event.actor_id)} • AED {display(event.verified_amount_aed)} • {display(event.payment_reference)} • {display(event.note)}</p>)}</div>}
+ {tab==='send-money-requests'&&sendRecipient&&<section aria-label="Recipient details"><h3>Recipient details • {sendRecipient.request}</h3><button onClick={()=>setSendRecipient(null)}>Close details</button><p>{display(sendRecipient.details.name)} • {display(sendRecipient.details.provider)} • {display(sendRecipient.details.account)} • {display(sendRecipient.details.bank)}</p></section>}
+ {tab==='send-money-requests'&&sendHistory&&<div aria-live="polite"><h3>Review audit history • {sendHistory.request}</h3>{sendHistory.reviews.map(event=><p key={'review-'+String(event.id)}>{display(event.created_at)} • {display(event.previous_status)} → {display(event.new_status)} • {display(event.actor_id)} • {display(event.note)}</p>)}{sendHistory.references.map(event=><p key={'reference-'+String(event.id)}>{display(event.created_at)} • Unverified reference {display(event.payout_reference)} • {display(event.actor_id)}</p>)}{sendHistory.recipientReviews.map(event=><p key={'recipient-'+String(event.id)}>{display(event.created_at)} • Recipient admin review: {display(event.status)} • {display(event.actor_id)} • {display(event.note)} • Evidence: {display(event.evidence_reference)}</p>)}{sendHistory.reconciliations.map(event=><p key={'reconciliation-'+String(event.id)}>{display(event.created_at)} • Reconciliation report: {display(event.status)} • {display(event.actor_id)} • {display(event.note)} • Evidence: {display(event.evidence_reference)}</p>)}{sendHistory.resolutions.map(event=><p key={'resolution-'+String(event.id)}>{display(event.created_at)} • Failed-payout release proposal: {display(event.status)} • {display(event.actor_id)} • {display(event.note)} • Proposer evidence: {display(event.evidence_reference)}</p>)}{sendHistory.resolutionApprovals.map(event=><p key={'approval-'+String(event.resolution_event_id)}>{display(event.created_at)} • Approved by {display(event.approver_id)} • {display(event.note)} • Independent evidence: {display(event.evidence_reference)}</p>)}</div>}
  <p>Most recent 100 records. Transactions are read only.</p></section></>}
  <footer>Tokens stay in memory. Closing or reloading this page requires signing in again.</footer></main>;
 }

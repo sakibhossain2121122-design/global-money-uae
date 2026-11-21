@@ -158,9 +158,16 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
             methodsLoaded = true
         }
     }
+    fun loadWallet() {
+        walletBalance = null
+        call({ api.request("wallet") }) { response ->
+            val wallet = JSONObject(response)
+            walletBalance = wallet.optString(if (wallet.has("availableBalance")) "availableBalance" else "balance").takeIf { it.isNotBlank() && it != "null" }
+        }
+    }
     LaunchedEffect(signedIn) {
         if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletBalance = null; receiptRequestId = "" }
-        else call({ api.request("wallet") }) { response -> walletBalance = JSONObject(response).optString("balance").takeIf { it.isNotBlank() && it != "null" } }
+        else loadWallet()
     }
     MaterialTheme(colorScheme = Palette) {
         Scaffold { insets ->
@@ -194,7 +201,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                         TextButton(enabled = !busy, onClick = { register = !register; password = "" }) { Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন")) }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(enabled = !busy, onClick = { page = "Home"; rows = JSONArray() }) { Text(t("Home", "হোম")) }
+                            TextButton(enabled = !busy, onClick = { page = "Home"; rows = JSONArray(); loadWallet() }) { Text(t("Home", "হোম")) }
                             TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
                             TextButton(enabled = !busy, onClick = {
                                 call({ api.request("auth/logout", "POST", JSONObject()) }) {
@@ -208,8 +215,10 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                     Column(Modifier.padding(24.dp)) {
                                         Text(t("Available balance • AED", "ব্যালেন্স • AED"), color = Color.White)
                                         Text(walletBalance ?: "—", style = MaterialTheme.typography.displayMedium, color = Color.White)
+                                        Text(t("Last retrieved balance", "সর্বশেষ প্রাপ্ত ব্যালেন্স"), color = Color.White)
                                     }
                                 }
+                                TextButton(enabled = !busy, onClick = { loadWallet() }) { Text(t("Refresh balance", "ব্যালেন্স রিফ্রেশ করুন")) }
                                 Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
                                 listOf("BOTIM MONEY" to "BOTIM MONEY", "Send money" to "অর্থ পাঠান").forEach { (en,bengali) ->
                                     OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(t(en,bengali)) }

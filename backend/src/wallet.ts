@@ -3,12 +3,16 @@ import { ApiError, financialPosting, uuid } from './security.ts';
 
 export async function walletBalance(c: PoolClient, customerId: string) {
   const row = (await c.query(`
-    SELECT w.currency, (COALESCE(sum(e.amount_minor), 0)::numeric / 100)::numeric(24,2)::text AS balance
-    FROM wallets w LEFT JOIN ledger_entries e ON e.wallet_id=w.id
+    SELECT w.currency,
+      (COALESCE((SELECT sum(e.amount_minor) FROM ledger_entries e WHERE e.wallet_id=w.id),0)::numeric / 100)::numeric(24,2)::text AS balance,
+      (COALESCE((SELECT sum(s.amount_minor) FROM send_money_requests s WHERE s.wallet_id=w.id AND s.hold_status='held'),0)::numeric / 100)::numeric(24,2)::text AS held_balance,
+      ((COALESCE((SELECT sum(e.amount_minor) FROM ledger_entries e WHERE e.wallet_id=w.id),0) -
+        COALESCE((SELECT sum(s.amount_minor) FROM send_money_requests s WHERE s.wallet_id=w.id AND s.hold_status='held'),0))::numeric / 100)::numeric(24,2)::text AS available_balance
+    FROM wallets w
     WHERE w.customer_id=$1 AND w.currency='AED' AND w.kind='customer'
-    GROUP BY w.id, w.currency
   `, [customerId])).rows[0];
-  return { balance: row?.balance ?? null, currency: 'AED', postingEnabled: false };
+  return { balance: row?.balance ?? null, heldBalance: row?.held_balance ?? null,
+    availableBalance: row?.available_balance ?? null, currency: 'AED', postingEnabled: false };
 }
 
 // The unconditional application guard and the database denial triggers are both required.

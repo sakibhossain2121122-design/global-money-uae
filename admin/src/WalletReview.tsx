@@ -1,11 +1,13 @@
 import React, {useState} from 'react';
 
-type Wallet = {balance: string | null; currency: string; postingEnabled: boolean};
+type Wallet = {balance: string | null; heldBalance?: string | null; availableBalance?: string | null; currency: string; postingEnabled: boolean};
 
 export function WalletView({name, wallet}: {name: string; wallet: Wallet}) {
  return <section aria-label="Customer wallet">
   <h3>{name} wallet</h3>
   <p>Balance: {wallet.balance === null ? 'Unavailable' : `${wallet.currency} ${wallet.balance}`}</p>
+  {wallet.availableBalance !== undefined && <p>Available: {wallet.availableBalance === null ? 'Unavailable' : `${wallet.currency} ${wallet.availableBalance}`}</p>}
+  {wallet.heldBalance !== undefined && <p>Reserved: {wallet.heldBalance === null ? 'Unavailable' : `${wallet.currency} ${wallet.heldBalance}`}</p>}
   <p>Wallet credit is disabled.</p>
  </section>;
 }

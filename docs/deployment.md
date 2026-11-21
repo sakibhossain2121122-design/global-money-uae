@@ -33,6 +33,59 @@ GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;
 
 Do not grant runtime ownership, DDL, role changes, ledger writes, transaction writes, or audit update/delete access. The registration code deliberately omits role fields. Provision admins individually through the owner connection after verifying identity and secure access. There is no default password. Add an identity-aware gateway with administrator MFA before exposing administration outside a trusted network.
 
+After applying migrations 008 and 009, use the migration owner to narrow the
+runtime grants on request and audit tables. These grants let the API create and
+review requests while withholding audit mutation, table ownership, `TRUNCATE`,
+and ledger posting. Adapt role/database identifiers only after a reviewed
+staging migration:
+
+```sql
+REVOKE ALL ON service_requests, service_request_events, add_money_receipts,
+ add_money_receipt_events, audit_logs,
+ admin_control_events, send_money_requests, send_money_reference_events,
+ send_money_review_events, send_money_reconciliation_approvals FROM PUBLIC, gm_app;
+GRANT SELECT ON service_requests, service_request_events, add_money_receipts,
+ add_money_receipt_events, audit_logs,
+ admin_control_events, send_money_requests, send_money_reference_events,
+ send_money_review_events, send_money_reconciliation_approvals TO gm_app;
+GRANT INSERT(customer_id,request_type,amount_aed,payment_method_id,customer_note,idempotency_key)
+ ON service_requests TO gm_app;
+GRANT UPDATE(status,admin_note,reviewed_by,reviewed_at,updated_at)
+ ON service_requests TO gm_app;
+GRANT INSERT(request_id,actor_id,previous_status,new_status,note)
+ ON service_request_events TO gm_app;
+GRANT INSERT(request_id,payment_method_id,content_type,content,sha256)
+ ON add_money_receipts TO gm_app;
+GRANT UPDATE(verification_status,verified_amount_aed,payment_reference,review_note,reviewed_by,reviewed_at)
+ ON add_money_receipts TO gm_app;
+GRANT INSERT(receipt_id,actor_id,verification_status,verified_amount_aed,payment_reference,note)
+ ON add_money_receipt_events TO gm_app;
+GRANT INSERT(request_id,customer_id,wallet_id,beneficiary_id,beneficiary_name,
+ beneficiary_provider,beneficiary_account,beneficiary_bank,amount_minor,idempotency_key)
+ ON send_money_requests TO gm_app;
+GRANT UPDATE(hold_status,released_at,payout_reference) ON send_money_requests TO gm_app;
+GRANT INSERT(request_id,actor_id,payout_reference) ON send_money_reference_events TO gm_app;
+GRANT INSERT(request_id,actor_id,kind,status,note,evidence_reference)
+ ON send_money_review_events TO gm_app;
+GRANT INSERT(resolution_event_id,approver_id,note,evidence_reference)
+ ON send_money_reconciliation_approvals TO gm_app;
+GRANT INSERT(actor_id,action,target) ON audit_logs TO gm_app;
+GRANT USAGE ON SEQUENCE service_request_events_id_seq,
+ add_money_receipt_events_id_seq,
+ send_money_reference_events_id_seq,send_money_review_events_id_seq,
+ audit_logs_id_seq TO gm_app;
+```
+
+Keep the migration owner credential out of the API environment; the API process
+must connect only as `gm_app`. Verify in staging that `gm_app` is not an owner,
+superuser, role member, or granted `UPDATE`, `DELETE`, or `TRUNCATE` on audit
+events; test the ordinary API paths using that role before release. Database
+owners and superusers can still disable triggers or alter grants. Restrict and
+monitor those credentials, require MFA and change approval for owner access,
+alert on DDL/role/grant changes, retain independent protected backups, and
+periodically verify audit continuity. Triggers and role grants are defense in
+depth, not tamper-proof storage.
+
 ## API and admin
 
 Install Node.js 24, then `npm ci` in `backend` and `admin`. Run backend tests/type checks and `npm run build` in `admin`. Install under a dedicated non-root OS user. Run `node --env-file=/etc/global-money/api.env /srv/global-money/backend/src/server.ts` using systemd or another supervised service with restart limits, memory limits and graceful shutdown. `DATABASE_URL` must use the runtime role. Do not serve `.env`, source directories or database dumps from a web server.
@@ -67,6 +120,19 @@ The API applies an in-memory 100 requests/minute peer-IP limit and 10 auth attem
 ## Ledger and KYC architecture
 
 A journal has a unique idempotency key; entries use signed integer minor units tied to currency-specific wallets. A deferred constraint checks at least two entries and zero sum per currency. There is no mutable stored balance. API and database triggers reject all journal/entry mutations; runtime role grants also omit financial writes. No wallets are credited or seeded. A future authorized posting service must atomically insert a complete balanced journal, use durable idempotency, preserve immutability, reconcile against providers and expose only confirmed balances. Do not remove the posting guards merely to demonstrate a balance.
+
+Send Money requests reserve funds against the ledger-derived balance while
+locking the customer wallet; a database trigger repeats the available-balance
+check. The runtime role cannot write ledger entries. Any future posting service
+must take the same wallet lock and account for active reservations before a
+debit or credit; do not grant ledger writes to `gm_app`. Releasing a payout
+reservation after a reported failure requires a pending failed-payout proposal,
+a different active administrator, distinct evidence references and an atomic
+one-time approval. These are human attestations, not provider verification.
+There is no payout execution, settlement, or success endpoint. Do not treat
+these reports as proof of provider state or enable credits/payouts without an
+independently authenticated provider confirmation and separate financial
+authorization.
 
 `backend/src/kyc.ts` describes future Emirates ID/passport verification capabilities, with `documentsAccepted:false`. No upload storage, identity-number columns, approval callbacks or document endpoint exists. Future provider work requires explicit privacy, retention, encryption and authorization design before accepting real documents.
 

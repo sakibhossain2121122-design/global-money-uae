@@ -90,6 +90,9 @@ try {
   assert.equal((await request('admin/add-money-requests/'+bobId+'/receipt','PATCH',{...verified,payment_reference:' reference-1 '},admin)).status,409);
   const events=(await request('admin/add-money-requests/'+id+'/receipt-events','GET',undefined,admin)).body;
   assert.deepEqual(events.map((e:{verification_status:string})=>e.verification_status),['pending','verified']);
+  await assert.rejects(()=>pool.query('UPDATE add_money_receipt_events SET note=$1 WHERE receipt_id=(SELECT id FROM add_money_receipts WHERE request_id=$2)',['tampered',id]),/append-only/);
+  await assert.rejects(()=>pool.query('DELETE FROM add_money_receipt_events WHERE receipt_id=(SELECT id FROM add_money_receipts WHERE request_id=$1)',[id]),/append-only/);
+  await assert.rejects(()=>pool.query('UPDATE service_request_events SET note=$1 WHERE request_id=$2',['tampered',id]),/append-only/);
   assert.equal((await pool.query('SELECT count(*) FROM ledger_journals')).rows[0].count,'0');
   assert.equal((await request('wallet/credit','POST',{},admin)).status,503);
  });

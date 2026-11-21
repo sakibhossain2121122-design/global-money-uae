@@ -9,7 +9,7 @@ Except for receipt upload and download, payloads and responses are JSON. JSON re
 | POST auth/logout | `{}` → revokes current token |
 | GET me | current id, email, name, role |
 | PATCH me | `{name}` |
-| GET wallet | AED balance derived from ledger entries, as a decimal string; `null` when no customer wallet exists. `postingEnabled` is always `false`. |
+| GET wallet | `balance` is the AED ledger balance; `heldBalance` is the sum of active Send Money reservations and `availableBalance` is the ledger balance minus those reservations. Amounts are decimal strings, or `null` when no customer wallet exists. `postingEnabled` is always `false`. |
 | GET rates | `{pair:"AED/BDT",value:null,available:false}` |
 | GET transactions | customer's stored statuses, latest 100; no seeded data |
 | GET/POST beneficiaries | list or create `{name,provider,account,bank?}` |
@@ -17,7 +17,7 @@ Except for receipt upload and download, payloads and responses are JSON. JSON re
 | GET/POST support | list or create `{subject,message}` |
 | GET kyc | `{status:"unavailable",documentsAccepted:false}` |
 | GET admin/users | admin only: latest 100 account records without password hashes |
-| GET admin/users/:uuid/wallet | admin only: the selected customer's ledger-derived AED balance; `null` when no wallet exists |
+| GET admin/users/:uuid/wallet | admin only: the selected customer's ledger balance, active reservations and available balance; `null` values when no wallet exists |
 | PATCH admin/users | admin only: `{id,status:"active"|"suspended"}`; suspension deletes sessions; own suspension prohibited |
 | GET admin/support | admin only: latest 100 tickets |
 | PATCH admin/support | admin only: `{id,status:"open"|"in_progress"|"closed"}` |
@@ -41,6 +41,93 @@ requires an amount and reference. The recorded status is an admin assertion,
 not financial authorization and not a credit. The panel renders PDF pages locally
 without an interactive scripting layer. Receipt bytes are stored in the database, not public files;
 database access, backups and encryption at rest must be restricted in deployment.
+
+### Send Money requests and reservations
+
+`POST /v1/send-money-requests` accepts `{amount_aed,beneficiary_id,idempotency_key,note?}`.
+The authenticated customer must own the beneficiary and an AED wallet. The server
+locks the wallet, checks its ledger balance less existing holds, and atomically
+creates a review request and reservation. A repeat with the same key and payload
+returns the existing request; a changed payload or an identical active request
+returns 409. `GET /v1/send-money-requests` lists only the caller's requests.
+For duplicate detection, equivalent Bangladesh mobile number formats are
+normalized; bank account formatting is normalized within the named bank.
+The recipient details are snapshotted for the request, so deleting a beneficiary
+does not erase its existing request history. Restrict database and backup access.
+The payout recipient is revalidated at submission: bKash, Nagad, Rocket and Upay
+require a Bangladesh mobile number; Bank requires a bank name and at least six
+alphanumeric account characters after removing spaces and hyphens. These are
+format checks only; they do not prove account ownership or availability.
+
+`GET /v1/admin/send-money-requests` lists requests for admins. `PATCH
+/v1/admin/send-money-requests/:uuid` accepts `{status,expected_status,note?}`:
+pending requests can enter `under_review`, and open requests can be `rejected`
+or `cancelled`. A note is required for rejection or cancellation. Only those
+admin actions release a hold; no customer cancellation or automatic expiry is
+provided. Reviews and hold releases are atomic and audited. Concurrent changes
+using an outdated expected status return 409.
+
+An admin may use `PUT /v1/admin/send-money-requests/:uuid/payout-reference` with
+`{payout_reference}` to record a unique, **unverified** reference. An identical
+retry is idempotent. This is not a payout or provider confirmation. Once a
+reference or reconciliation report is recorded, the reservation cannot be
+released by the current API. Reconciliation reports do not establish that a
+payment failed or that funds can safely be released.
+
+Admins can view the immutable recipient snapshot with
+`GET /v1/admin/send-money-requests/:uuid/recipient` (the view is audited).
+`POST /v1/admin/send-money-requests/:uuid/recipient-review` records
+`{status,expected_event_id,note,evidence_reference?}` with status
+`under_review`, `admin_reviewed`, or `rejected`. An `admin_reviewed` assertion
+requires an evidence reference. It is not independent recipient verification
+and cannot authorize a payout.
+
+`POST /v1/admin/send-money-requests/:uuid/reconciliation` accepts the same
+fields with status `unverified`, `under_review`, `disputed`, or
+`reported_failed`. These are admin reports, not provider-confirmed outcomes.
+They may also document a dispute discovered after an earlier release; the API
+returns the current hold status and does not recreate a released hold.
+
+For an open request with a payout reference and latest reconciliation status
+`reported_failed`, an admin can propose reservation release through
+`POST /v1/admin/send-money-requests/:uuid/reconciliation-resolution` with
+`{action:"propose_failed",expected_event_id:"0",note,evidence_reference}`.
+The proposal is append-only and does not release funds. A different active
+admin must inspect independent evidence and submit
+`{action:"approve_failed",expected_event_id:<proposal event ID>,note,evidence_reference}`.
+The second evidence reference must differ from the proposer's and the payout
+reference. Approval, final rejection status, audit event and reservation release
+commit atomically; duplicate or concurrent approvals fail. The result is labeled
+`admin_attested_failed_two_person`, not provider-confirmed, and releases only
+the reservation—it does not post a ledger journal or mark payout success.
+Admin evidence references are human-entered identifiers and are not technically
+validated against provider systems. Do not approve without independently
+checking authoritative evidence under an approved dual-control runbook.
+
+For each review kind, `expected_event_id` is `"0"` initially, then the latest
+event ID returned by the admin list or previous response. Concurrent stale
+submissions return 409. `GET /v1/admin/send-money-requests/:uuid/events` returns
+the request, recipient-review, reference and reconciliation histories.
+Database triggers reject updates, deletes and truncation of financial request,
+receipt-review, Send Money and audit histories; they prevent reopened requests,
+deletion or reinstatement of released holds, changes to the recipient snapshot
+or an existing payout reference, and releases without the required two-admin
+approval. These triggers and runtime grants are defense in depth, not protection
+against a database owner who can disable them.
+
+Recipient reviews, references and reconciliation reports never authorize
+execution or success. The payout-success endpoint remains 503: no provider
+confirmation adapter or authorization exists. Before enabling one, require
+provider-specific authenticated, replay-resistant confirmation bound to the
+exact request, reference, destination, amount and outcome, plus separately
+reviewed settlement and authorization rules. A reported failure alone must not
+be treated as proof of non-payment or used to release a hold.
+
+Reservations are not ledger postings. Ledger posting remains disabled by the
+application and database triggers. Before enabling any debit or provider
+integration, independently review authorization, settlement, reconciliation,
+recipient verification, lock ordering and the interaction of every ledger
+writer with active holds.
 
 ### Payment and payout administration
 

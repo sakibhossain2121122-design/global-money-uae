@@ -17,7 +17,7 @@ async function request(path:string,method='GET',body?:unknown,bearer?:string){
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'7');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  // Exercise an upgrade from 003 with existing request/event history, not just an empty database.
  for(const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql'])await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
@@ -26,7 +26,7 @@ try {
  const legacy=(await pool.query("INSERT INTO service_requests(customer_id,request_type,amount_aed) VALUES($1,'send_money',10) RETURNING id",[legacyCustomer])).rows[0].id;
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacy,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'7');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
  assert.equal((await pool.query('SELECT status FROM service_requests WHERE id=$1',[legacy])).rows[0].status,'pending');
  assert.equal((await pool.query('SELECT count(*) FROM service_request_events WHERE request_id=$1',[legacy])).rows[0].count,'1');
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});

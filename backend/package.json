@@ -8,7 +8,7 @@
   "bootstrap-admin": "node src/bootstrap-admin.ts",
   "test": "node --test src/security.test.ts src/add-money.test.ts src/admin-control.test.ts src/receipts.test.ts && node --experimental-test-module-mocks --test test/wallet.test.mjs",
   "typecheck": "tsc --noEmit",
-  "test:integration": "node test/integration.test.ts && node test/add-money.integration.test.ts && node --experimental-test-module-mocks test/wallet-receipts.integration.test.ts",
+  "test:integration": "node test/integration.test.ts && node test/add-money.integration.test.ts && node --experimental-test-module-mocks test/wallet-receipts.integration.test.ts && node test/send-money.integration.test.ts",
   "test:payment-methods": "node --experimental-test-module-mocks test/payment-methods-readonly.test.mjs"
 },
 "dependencies": {

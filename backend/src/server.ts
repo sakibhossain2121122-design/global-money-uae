@@ -4,6 +4,7 @@ import {submission,review} from './add-money.ts';
 import { validateAccount, validateAddMoneyMethod, validateBankName, validateEnabledToggle } from './admin-control.ts';
 import { readReceipt, receiptReview } from './receipts.ts';
 import { walletBalance } from './wallet.ts';
+import { createSendMoney, reviewSendMoney, recordPayoutReference, recordSendMoneyReview, resolveFailedPayout, requireActiveAdmin } from './send-money.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -118,6 +119,64 @@ const server = createServer(async (req,res) => {
      await audit('add_money_receipt.uploaded',id);
      result={id:inserted.id,verificationStatus:'pending',postingEnabled:false};status=201;
     }
+   } else if(method==='POST' && path==='/v1/send-money-requests') {
+    const created=await createSendMoney(c,user.id,await body(req));
+    result=created.result;status=created.created?201:200;
+   } else if(method==='GET' && path==='/v1/send-money-requests') {
+    result=(await c.query(`SELECT r.id,r.amount_aed,r.status,r.customer_note,r.created_at,
+      s.beneficiary_name,s.beneficiary_provider,s.hold_status
+      FROM service_requests r JOIN send_money_requests s ON s.request_id=r.id
+      WHERE s.customer_id=$1 ORDER BY r.created_at DESC,r.id LIMIT 100`,[actor])).rows;
+   } else if(method==='GET' && path==='/v1/admin/send-money-requests') {
+    await requireActiveAdmin(c,user.id);
+    result=(await c.query(`SELECT r.id,r.customer_id,c.name AS customer_name,r.amount_aed,r.status,r.customer_note,
+      r.admin_note,r.created_at,s.beneficiary_name,s.beneficiary_provider,right(s.beneficiary_account,4) AS beneficiary_account_last4,
+      s.hold_status,s.payout_reference,
+      COALESCE(recipient_review.id::text,'0') AS recipient_event_id,recipient_review.status AS recipient_review_status,
+      COALESCE(reconciliation.id::text,'0') AS reconciliation_event_id,reconciliation.status AS reconciliation_status,
+      COALESCE(resolution.id::text,'0') AS resolution_event_id,
+      CASE WHEN approval.resolution_event_id IS NOT NULL THEN 'admin_attested_failed_two_person' ELSE resolution.status END AS resolution_status,
+      resolution.actor_id AS resolution_proposed_by,approval.approver_id AS resolution_approved_by
+      FROM service_requests r
+      JOIN send_money_requests s ON s.request_id=r.id JOIN customers c ON c.id=r.customer_id
+      LEFT JOIN LATERAL (SELECT id,status FROM send_money_review_events WHERE request_id=r.id AND kind='recipient' ORDER BY id DESC LIMIT 1) recipient_review ON true
+      LEFT JOIN LATERAL (SELECT id,status FROM send_money_review_events WHERE request_id=r.id AND kind='reconciliation' ORDER BY id DESC LIMIT 1) reconciliation ON true
+      LEFT JOIN LATERAL (SELECT id,status,actor_id FROM send_money_review_events WHERE request_id=r.id AND kind='reconciliation_resolution' ORDER BY id DESC LIMIT 1) resolution ON true
+      LEFT JOIN send_money_reconciliation_approvals approval ON approval.resolution_event_id=resolution.id
+      ORDER BY r.created_at DESC,r.id LIMIT 100`)).rows;
+   } else if(method==='PATCH' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}$/.test(path)) {
+    result=await reviewSendMoney(c,user.id,path.split('/').pop()!,await body(req));
+   } else if(method==='PUT' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/payout-reference$/.test(path)) {
+    result=await recordPayoutReference(c,user.id,path.split('/')[4],await body(req));
+   } else if(method==='GET' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/recipient$/.test(path)) {
+    await requireActiveAdmin(c,user.id);
+    const id=uuid(path.split('/')[4]);
+    result=(await c.query(`SELECT beneficiary_name AS name,beneficiary_provider AS provider,
+      beneficiary_account AS account,beneficiary_bank AS bank FROM send_money_requests WHERE request_id=$1`,[id])).rows[0];
+    if(!result)throw new ApiError(404,'Request not found');
+    await audit('admin.send_money_recipient.view',id);
+   } else if(method==='POST' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/(recipient-review|reconciliation)$/.test(path)) {
+    const parts=path.split('/'),kind=parts[5]==='recipient-review'?'recipient':'reconciliation';
+    result=await recordSendMoneyReview(c,user.id,parts[4],kind,await body(req));status=201;
+   } else if(method==='POST' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/reconciliation-resolution$/.test(path)) {
+    const resolution=await resolveFailedPayout(c,user.id,path.split('/')[4],await body(req));
+    result=resolution;status=resolution.resolutionStatus==='pending_approval'?201:200;
+   } else if(method==='GET' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/events$/.test(path)) {
+    await requireActiveAdmin(c,user.id);
+    const id=uuid(path.split('/')[4]);
+    if(!(await c.query('SELECT request_id FROM send_money_requests WHERE request_id=$1',[id])).rowCount)throw new ApiError(404,'Request not found');
+    result={
+     reviews:(await c.query('SELECT id,actor_id,previous_status,new_status,note,created_at FROM service_request_events WHERE request_id=$1 ORDER BY id',[id])).rows,
+     references:(await c.query('SELECT id,actor_id,payout_reference,created_at FROM send_money_reference_events WHERE request_id=$1 ORDER BY id',[id])).rows,
+     recipientReviews:(await c.query("SELECT id,actor_id,status,note,evidence_reference,created_at FROM send_money_review_events WHERE request_id=$1 AND kind='recipient' ORDER BY id",[id])).rows,
+     reconciliations:(await c.query("SELECT id,actor_id,status,note,evidence_reference,created_at FROM send_money_review_events WHERE request_id=$1 AND kind='reconciliation' ORDER BY id",[id])).rows,
+     resolutions:(await c.query("SELECT id,actor_id,status,note,evidence_reference,created_at FROM send_money_review_events WHERE request_id=$1 AND kind='reconciliation_resolution' ORDER BY id",[id])).rows,
+     resolutionApprovals:(await c.query(`SELECT a.resolution_event_id::text,a.approver_id,a.note,a.evidence_reference,a.created_at
+       FROM send_money_reconciliation_approvals a JOIN send_money_review_events e ON e.id=a.resolution_event_id
+       WHERE e.request_id=$1 ORDER BY a.created_at`,[id])).rows
+    };
+   } else if(method==='POST' && /^\/v1\/admin\/send-money-requests\/[0-9a-f-]{36}\/(?:recipient-verification|payout-success)$/.test(path)) {
+    financialPosting();
    } else if(method==='GET' && path==='/v1/admin/add-money-requests') {
     result=(await c.query(`SELECT r.id,r.customer_id,c.name AS customer_name,r.amount_aed,r.payment_method_id,
      r.customer_note,r.status,r.admin_note,r.reviewed_by,r.reviewed_at,r.created_at,

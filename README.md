@@ -8,7 +8,7 @@ Financial services are disabled. No provider integration, partnership, regulator
 
 - `android/`: emerald, navy, white and gold customer app; English/Bengali switch; registration, login, logout, profile, beneficiaries and support tickets connected to the API.
 - `backend/`: validated APIs, scrypt password hashing, opaque revocable eight-hour sessions, authorization, bounded requests, rate limits, audit logging, migrations and tests.
-- `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rates, Add Money request availability/review, UAE payment accounts and Bangladesh payout bank directories. Payment, wallet-credit and transfer processing remain disabled.
+- `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rates, Add Money review, Send Money reservations, recipient reviews and reconciliation reports, UAE payment accounts and Bangladesh payout bank directories. These reviews do not confirm payment or recipient ownership. Payment, wallet-credit and transfer processing remain disabled.
 - `docs/deployment.md`: secure setup, roles, service hosting and operational boundaries.
 - `docs/API.md`: account API contracts.
 - `docs/add-money-requests.md`: Add Money request, deduplication and admin review contracts.
