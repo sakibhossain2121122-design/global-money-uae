@@ -21,7 +21,7 @@ internal class AccountApi(
     private val openConnection: (URL) -> HttpURLConnection = {
         it.openConnection() as HttpURLConnection
         }
-)
+) {
 
     @Volatile var token: String? = null
 
