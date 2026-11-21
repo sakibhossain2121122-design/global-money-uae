@@ -6,7 +6,7 @@ Deploy this as an account-platform staging foundation first. Real money posting,
 
 Use PostgreSQL 17 on a private network with encrypted storage, backups and verified restore procedures. Use certificate-verified TLS for remote connections (for example `sslmode=verify-full` and your provider's trusted CA); do not disable certificate verification. Keep database credentials in a secret manager or a service-owned environment file with mode 0600. Never expose the database publicly.
 
-Run `backend/src/migrate.ts` with a dedicated migration owner and a fresh database. The runner holds an advisory transaction lock and applies migration 001 once, atomically. Do not deploy edited initial migrations to a database that has already applied them; add a numbered forward migration and extend the runner for future releases.
+Run `backend/src/migrate.ts` with a dedicated migration owner. The runner holds an advisory transaction lock and applies pending numbered migrations once, atomically. Do not deploy edited initial migrations to a database that has already applied them; add a numbered forward migration and extend the runner for future releases.
 
 Create a separate runtime role using the owner connection. Set its password interactively with `\password gm_app` or your secret provisioning system; do not place it in source or shell history:
 
@@ -25,7 +25,7 @@ GRANT INSERT, UPDATE ON rates TO gm_app;
 GRANT INSERT(actor_id,action,target) ON audit_logs TO gm_app;
 GRANT USAGE ON SEQUENCE audit_logs_id_seq TO gm_app;
 GRANT SELECT ON payment_methods TO gm_app;
-GRANT UPDATE(add_money_request_enabled) ON payment_methods TO gm_app;
+GRANT UPDATE(add_money_request_enabled,updated_at) ON payment_methods TO gm_app;
 GRANT SELECT, INSERT, UPDATE ON company_payment_accounts, payout_banks TO gm_app;
 GRANT INSERT(admin_id,action,target_id) ON admin_control_events TO gm_app;
 GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;
@@ -33,7 +33,7 @@ GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;
 
 Do not grant runtime ownership, DDL, role changes, ledger writes, transaction writes, or audit update/delete access. The registration code deliberately omits role fields. Provision admins individually through the owner connection after verifying identity and secure access. There is no default password. Add an identity-aware gateway with administrator MFA before exposing administration outside a trusted network.
 
-After applying migrations 008 and 009, use the migration owner to narrow the
+After applying migrations 008 through 010, use the migration owner to narrow the
 runtime grants on request and audit tables. These grants let the API create and
 review requests while withholding audit mutation, table ownership, `TRUNCATE`,
 and ledger posting. Adapt role/database identifiers only after a reviewed
@@ -70,11 +70,19 @@ GRANT INSERT(request_id,actor_id,kind,status,note,evidence_reference)
 GRANT INSERT(resolution_event_id,approver_id,note,evidence_reference)
  ON send_money_reconciliation_approvals TO gm_app;
 GRANT INSERT(actor_id,action,target) ON audit_logs TO gm_app;
+GRANT INSERT(admin_id,action,target_id) ON admin_control_events TO gm_app;
 GRANT USAGE ON SEQUENCE service_request_events_id_seq,
  add_money_receipt_events_id_seq,
  send_money_reference_events_id_seq,send_money_review_events_id_seq,
  audit_logs_id_seq TO gm_app;
+GRANT EXECUTE ON FUNCTION public.lock_send_money_beneficiary(uuid,uuid),
+ public.lock_send_money_wallet(uuid) TO gm_app;
 ```
+
+The example assumes a newly created role with no inherited privileges or
+pre-existing column grants. Table-level revokes alone do not remove previously
+granted column privileges; audit effective privileges and role memberships if
+reusing a role.
 
 Keep the migration owner credential out of the API environment; the API process
 must connect only as `gm_app`. Verify in staging that `gm_app` is not an owner,
@@ -86,11 +94,26 @@ alert on DDL/role/grant changes, retain independent protected backups, and
 periodically verify audit continuity. Triggers and role grants are defense in
 depth, not tamper-proof storage.
 
+Migration 010 uses narrowly scoped security-definer functions owned by the
+migration owner to lock beneficiary and wallet rows without granting runtime
+UPDATE permissions on those tables. Their search paths are fixed and table
+references are schema-qualified; never grant untrusted users CREATE on public
+or ownership of these functions or tables. The migration owner must own the
+referenced tables and trigger function. Runtime access to beneficiary and wallet
+data remains scoped by the API, not database row-level security. Test the exact
+documented grants against a disposable database before staging.
+
+Apply migration 010 and its function grants before starting this version of the
+API. There is no automated down migration. For rollback, stop the API and use a
+tested database restore and a matching application/grant configuration; the
+previous API's direct row locks do not work with these restricted grants. Do not
+grant broad wallet or beneficiary UPDATE privileges as a rollback shortcut.
+
 ## API and admin
 
 Install Node.js 24, then `npm ci` in `backend` and `admin`. Run backend tests/type checks and `npm run build` in `admin`. Install under a dedicated non-root OS user. Run `node --env-file=/etc/global-money/api.env /srv/global-money/backend/src/server.ts` using systemd or another supervised service with restart limits, memory limits and graceful shutdown. `DATABASE_URL` must use the runtime role. Do not serve `.env`, source directories or database dumps from a web server.
 
-The API intentionally binds to loopback. Put an HTTPS reverse proxy on the same host. Serve only `admin/dist` as static content, proxy `/v1/*` and `/health` to `127.0.0.1:3000`, and return `index.html` for admin navigation. One origin avoids cross-origin credential policies. Example Caddy routing (replace domain and static path):
+The API binds to all interfaces, not loopback. Restrict its port with a host firewall or private network so only the HTTPS reverse proxy can reach it. Serve only `admin/dist` as static content, proxy `/v1/*` and `/health` to `127.0.0.1:3000`, and return `index.html` for admin navigation. One origin avoids cross-origin credential policies. Example Caddy routing (replace domain and static path):
 
 ```caddyfile
 money.example.com {

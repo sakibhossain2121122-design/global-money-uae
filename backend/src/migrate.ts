@@ -18,7 +18,8 @@ const migrations = [
   { version: '006', file: '006_admin_request_configuration.sql' },
   { version: '007', file: '007_receipt_review.sql' },
   { version: '008', file: '008_send_money_requests.sql' },
-  { version: '009', file: '009_send_money_review.sql' }
+  { version: '009', file: '009_send_money_review.sql' },
+  { version: '010', file: '010_runtime_reservation_locks.sql' }
 ];
 
 

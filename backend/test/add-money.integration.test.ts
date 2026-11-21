@@ -6,18 +6,20 @@ import {readFile} from 'node:fs/promises';
 import {randomUUID} from 'node:crypto';
 import pg from 'pg';
 import {requestJson} from './http-client.ts';
+import {createTestRuntime} from './runtime-role.ts';
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!new URL(url).pathname.endsWith('_test'))throw Error('Disposable TEST_DATABASE_URL ending in _test required');
 const pool=new pg.Pool({connectionString:url});
 const endpoint='http://127.0.0.1:3108/v1/';
 let child:ReturnType<typeof spawn>|undefined;
+let runtime:Awaited<ReturnType<typeof createTestRuntime>>|undefined;
 async function request(path:string,method='GET',body?:unknown,bearer?:string){
  return requestJson(endpoint+path,method,body,bearer);
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'10');
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  // Exercise an upgrade from 003 with existing request/event history, not just an empty database.
  for(const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql'])await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
@@ -26,10 +28,11 @@ try {
  const legacy=(await pool.query("INSERT INTO service_requests(customer_id,request_type,amount_aed) VALUES($1,'send_money',10) RETURNING id",[legacyCustomer])).rows[0].id;
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacy,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'10');
  assert.equal((await pool.query('SELECT status FROM service_requests WHERE id=$1',[legacy])).rows[0].status,'pending');
  assert.equal((await pool.query('SELECT count(*) FROM service_request_events WHERE request_id=$1',[legacy])).rows[0].count,'1');
- child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
+ runtime=await createTestRuntime(pool,url);
+ child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime.url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
  child.stderr?.on('data',()=>{});
  let ready=false;for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3108/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready);
  const password='A secure password 123!';
@@ -104,7 +107,7 @@ try {
   });
   if(process.env.TEST_LOOPBACK_ONLY==='1' && child) {
    child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');
-   child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
+   child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime!.url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
    child.stderr?.on('data',()=>{});
    let ready=false;for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3108/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}assert(ready);
   }
@@ -212,7 +215,7 @@ try {
  await test('HTTP rate limit returns 429 to a client exceeding the shared request budget',async()=>{
   const clientAddress='127.0.255.254';
   const loopbackOnly=process.env.TEST_LOOPBACK_ONLY==='1';
-  const isolated=loopbackOnly?spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3110'},stdio:['ignore','ignore','pipe']}):undefined;
+  const isolated=loopbackOnly?spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime!.url,PORT:'3110'},stdio:['ignore','ignore','pipe']}):undefined;
   isolated?.stderr?.on('data',()=>{});
   const health=`http://127.0.0.1:${loopbackOnly?'3110':'3108'}/health`;
   try {
@@ -227,4 +230,4 @@ try {
    assert.deepEqual(limited.body,{error:'Too many requests'});
   } finally {if(isolated){isolated.kill('SIGTERM');if(isolated.exitCode===null)await once(isolated,'exit');}}
  });
-}finally{if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}await pool.end();}
+}finally{if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}if(runtime)await runtime.cleanup();await pool.end();}

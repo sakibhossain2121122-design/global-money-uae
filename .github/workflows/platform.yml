@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
   push:
-    branches: [feature/premium-upgrade]
+    branches: [feature/premium-upgrade, feature/admin-control-system]
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
 permissions:
   contents: read
@@ -29,6 +29,6 @@ jobs:
         working-directory: backend
         env:
           TEST_DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/global_money_test
-      - run: npm ci && npm run build
+      - run: npm ci && npm test && npm run build
         working-directory: admin
       - run: python3 android/tools/check_project.py

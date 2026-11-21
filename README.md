@@ -50,7 +50,7 @@ npm --prefix admin run build
 python3 android/tools/check_project.py
 ```
 
-Integration tests destroy the `public` schema of a **disposable** database whose name ends in `_test`:
+Integration tests destroy the `public` schema of a **disposable** database whose name ends in `_test`. The test database owner must be able to create and drop disposable login roles; the API is exercised using a separate restricted runtime login:
 
 ```sh
 cd backend
@@ -73,13 +73,9 @@ cd android
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The existing `.github/workflows/android.yml` is unchanged and continues to build/test/upload the debug APK on Android pushes or manual dispatch. To build a connected APK in that workflow without editing its steps, add this **non-secret** origin to `android/gradle.properties` on the feature branch:
+The Android workflow builds, tests and uploads the debug APK on Android pushes or manual dispatch. Set the **non-secret** repository Actions variable `STAGING_API_BASE_URL` to the approved HTTPS origin; the workflow passes it as the Gradle property `API_BASE_URL`.
 
-```properties
-API_BASE_URL=https://YOUR-API-DOMAIN
-```
-
-Run **GLOBAL MONEY UAE Android APK** with `feature/premium-upgrade` selected, then download `global-money-uae-debug-apk` promptly (the existing retention is three days). Do not replace the old working APK until you have tested the new artifact.
+Run **GLOBAL MONEY UAE Android APK** with `feature/admin-control-system` selected, then download `global-money-uae-debug-apk` promptly (retention is three days). Do not replace the old working APK until you have tested the new artifact.
 
 ## Apply the delivery in Codespaces
 

@@ -6,16 +6,19 @@ import {randomUUID} from 'node:crypto';
 import {readFile} from 'node:fs/promises';
 import pg from 'pg';
 import {requestJson} from './http-client.ts';
+import {createTestRuntime} from './runtime-role.ts';
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url||!new URL(url).pathname.endsWith('_test'))throw new Error('Disposable TEST_DATABASE_URL ending in _test required');
 const pool=new pg.Pool({connectionString:url});
 const endpoint='http://127.0.0.1:3111/v1/';
 let child:ReturnType<typeof spawn>|undefined;
+let runtime:Awaited<ReturnType<typeof createTestRuntime>>|undefined;
+let runtimePool:pg.Pool|undefined;
 const request=(path:string,method='GET',body?:unknown,bearer?:string)=>requestJson(endpoint+path,method,body,bearer);
 async function restartApi() {
  if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}
- child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3111'},stdio:['ignore','ignore','pipe']});
+ child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime!.url,PORT:'3111'},stdio:['ignore','ignore','pipe']});
  child.stderr?.on('data',()=>{});
  let ready=false;
  for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3111/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
@@ -38,13 +41,15 @@ try {
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacyRequest,legacyCustomer]);
  await pool.query("INSERT INTO send_money_reference_events(request_id,actor_id,payout_reference) VALUES($1,$2,'LEGACY-REF')",[legacyRequest,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- await test('migration 009 preserves existing 008 requests and history',async()=>{
-  assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
+ await test('migrations 009 and 010 preserve existing 008 requests and history',async()=>{
+  assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'10');
   assert.equal((await pool.query('SELECT payout_reference FROM send_money_requests WHERE request_id=$1',[legacyRequest])).rows[0].payout_reference,'LEGACY-REF');
   assert.equal((await pool.query('SELECT count(*) FROM send_money_reference_events WHERE request_id=$1',[legacyRequest])).rows[0].count,'1');
   await assert.rejects(()=>pool.query('DELETE FROM send_money_reference_events WHERE request_id=$1',[legacyRequest]),/append-only/);
  });
- child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3111'},stdio:['ignore','ignore','pipe']});
+ runtime=await createTestRuntime(pool,url);
+ runtimePool=new pg.Pool({connectionString:runtime.url});
+ child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime.url,PORT:'3111'},stdio:['ignore','ignore','pipe']});
  child.stderr?.on('data',()=>{});
  let ready=false;
  for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3111/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
@@ -59,6 +64,23 @@ try {
  const first=await beneficiary('01712345678'),second=await beneficiary('01812345678');
  const path='send-money-requests';
  const draft={amount_aed:'70.00',beneficiary_id:first,idempotency_key:randomUUID()};
+ await test('runtime login cannot mutate wallets, beneficiaries, ledger or audit history',async()=>{
+  const role=(await runtimePool!.query('SELECT current_user AS name, rolsuper, rolcreaterole FROM pg_roles WHERE rolname=current_user')).rows[0];
+  assert.equal(role.name,runtime!.name);assert.equal(role.rolsuper,false);assert.equal(role.rolcreaterole,false);
+  const publicAccess=await pool.query(`SELECT count(*) FROM pg_proc p, LATERAL aclexplode(p.proacl) a
+   WHERE p.oid IN ('public.lock_send_money_beneficiary(uuid,uuid)'::regprocedure,'public.lock_send_money_wallet(uuid)'::regprocedure)
+   AND a.grantee=0 AND a.privilege_type='EXECUTE'`);
+  assert.equal(publicAccess.rows[0].count,'0');
+  for(const sql of [
+   "UPDATE wallets SET kind='clearing' WHERE false",
+   "UPDATE beneficiaries SET name='changed' WHERE false",
+   "INSERT INTO ledger_journals(idempotency_key) VALUES('forbidden')",
+   "UPDATE audit_logs SET action='changed' WHERE false",
+   "DELETE FROM admin_control_events WHERE false",
+   "TRUNCATE add_money_receipt_events",
+   "CREATE TABLE forbidden_runtime_ddl(id integer)"
+  ]) await assert.rejects(()=>runtimePool!.query(sql),{code:'42501'});
+ });
  await test('requests require an owned recipient and an existing wallet',async()=>{
   assert.equal((await request(path,'POST',draft)).status,401);
   assert.equal((await request(path,'POST',draft,bob)).status,404);
@@ -96,12 +118,19 @@ try {
   assert.equal((await request(path,'POST',{...heldDraft,amount_aed:'5.00'},alice)).status,409);
   const wallet=(await request('wallet','GET',undefined,alice)).body;
   assert.equal(wallet.balance,'100.00');assert.equal(wallet.heldBalance,'70.00');assert.equal(wallet.availableBalance,'30.00');
-  const overRequest=(await pool.query(`INSERT INTO service_requests(customer_id,request_type,amount_aed)
-    VALUES($1,'send_money',31.00) RETURNING id`,[aliceId])).rows[0].id;
-  await assert.rejects(()=>pool.query(`INSERT INTO send_money_requests
-    (request_id,customer_id,wallet_id,beneficiary_id,beneficiary_name,beneficiary_provider,beneficiary_account,amount_minor,idempotency_key)
-    VALUES($1,$2,(SELECT id FROM wallets WHERE customer_id=$2 AND kind='customer'),$3,'Recipient','bKash','01712345678',3100,$4)`,
-    [overRequest,aliceId,first,randomUUID()]),/Insufficient available wallet balance/);
+  const runtimeClient=await runtimePool!.connect();
+  try {
+   const walletId=(await runtimeClient.query("SELECT id FROM wallets WHERE customer_id=$1 AND kind='customer'",[aliceId])).rows[0].id;
+   await runtimeClient.query('CREATE TEMP TABLE ledger_entries(wallet_id uuid, amount_minor bigint)');
+   await runtimeClient.query('INSERT INTO pg_temp.ledger_entries VALUES($1,100000000)',[walletId]);
+   const overRequest=(await runtimeClient.query(`INSERT INTO service_requests(customer_id,request_type,amount_aed)
+     VALUES($1,'send_money',31.00) RETURNING id`,[aliceId])).rows[0].id;
+   await assert.rejects(()=>runtimeClient.query(`INSERT INTO send_money_requests
+     (request_id,customer_id,wallet_id,beneficiary_id,beneficiary_name,beneficiary_provider,beneficiary_account,amount_minor,idempotency_key)
+     VALUES($1,$2,$3,$4,'Recipient','bKash','01712345678',3100,$5)`,
+     [overRequest,aliceId,walletId,first,randomUUID()]),/Insufficient available wallet balance/);
+   await runtimeClient.query('DROP TABLE pg_temp.ledger_entries');
+  } finally {runtimeClient.release();}
   const list=(await request(path,'GET',undefined,bob)).body;assert.equal(list.length,0);
  });
  await test('only an administrator can review and release a hold',async()=>{
@@ -287,5 +316,7 @@ try {
  });
 } finally {
  if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}
+ if(runtimePool)await runtimePool.end();
+ if(runtime)await runtime.cleanup();
  await pool.end();
 }

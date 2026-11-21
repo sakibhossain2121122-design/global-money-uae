@@ -8,12 +8,14 @@ import pg from 'pg';
 import sharp from 'sharp';
 import {PDFDocument} from 'pdf-lib';
 import {requestJson} from './http-client.ts';
+import {createTestRuntime} from './runtime-role.ts';
 
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !new URL(url).pathname.endsWith('_test'))throw new Error('Disposable TEST_DATABASE_URL ending in _test required');
 const pool=new pg.Pool({connectionString:url});
 const endpoint='http://127.0.0.1:3109/v1/';
 let child:ReturnType<typeof spawn>|undefined;
+let runtime:Awaited<ReturnType<typeof createTestRuntime>>|undefined;
 async function request(path:string,method='GET',body?:unknown,bearer?:string) {
  return requestJson(endpoint+path,method,body,bearer);
 }
@@ -25,7 +27,8 @@ async function upload(id:string, bytes:Buffer, type:string, bearer:string) {
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3109'},stdio:['ignore','ignore','pipe']});
+ runtime=await createTestRuntime(pool,url);
+ child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime.url,PORT:'3109'},stdio:['ignore','ignore','pipe']});
  child.stderr?.on('data',()=>{});
  let ready=false;
  for(let n=0;n<50;n++){try{if((await fetch('http://127.0.0.1:3109/health')).ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
@@ -133,5 +136,6 @@ try {
  });
 } finally {
  if(child){child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');}
+ if(runtime)await runtime.cleanup();
  await pool.end();
 }

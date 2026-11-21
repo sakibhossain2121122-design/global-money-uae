@@ -19,6 +19,11 @@ export async function requireActiveAdmin(c: PoolClient, actor: string) {
  if(!admin.rowCount)throw new ApiError(403,'Administrator access required');
 }
 
+async function lockWallet(c: PoolClient, walletId: string) {
+ const locked=(await c.query('SELECT public.lock_send_money_wallet($1) AS locked',[walletId])).rows[0].locked;
+ if(!locked)throw new ApiError(409,'Wallet balance unavailable');
+}
+
 export async function createSendMoney(c: PoolClient, actor: string, input: Record<string, unknown>) {
  fields(input, ['amount_aed','beneficiary_id','idempotency_key','note']);
  const value=amount(input.amount_aed), beneficiary=uuid(input.beneficiary_id);
@@ -32,11 +37,16 @@ export async function createSendMoney(c: PoolClient, actor: string, input: Recor
    throw new ApiError(409,'Submission key already used for different details');
   return {created:false, result:{id:previous.id,status:previous.status,holdStatus:previous.hold_status,payoutEnabled:false}};
  }
- const recipient=(await c.query('SELECT id,name,provider,account,bank FROM beneficiaries WHERE id=$1 AND customer_id=$2 FOR SHARE',[beneficiary,actor])).rows[0];
+ const recipientLocked=(await c.query('SELECT public.lock_send_money_beneficiary($1,$2) AS locked',[beneficiary,actor])).rows[0].locked;
+ if(!recipientLocked)throw new ApiError(404,'Beneficiary not found');
+ const recipient=(await c.query('SELECT id,name,provider,account,bank FROM beneficiaries WHERE id=$1 AND customer_id=$2',[beneficiary,actor])).rows[0];
  if(!recipient)throw new ApiError(404,'Beneficiary not found');
  const validRecipient=validateRecipient(recipient);
- const wallet=(await c.query("SELECT id FROM wallets WHERE customer_id=$1 AND currency='AED' AND kind='customer' FOR UPDATE",[actor])).rows[0];
+ const wallet=(await c.query("SELECT id FROM wallets WHERE customer_id=$1 AND currency='AED' AND kind='customer'",[actor])).rows[0];
  if(!wallet)throw new ApiError(409,'Wallet balance unavailable');
+ await lockWallet(c,wallet.id);
+ if(!(await c.query("SELECT 1 FROM wallets WHERE id=$1 AND customer_id=$2 AND currency='AED' AND kind='customer'",[wallet.id,actor])).rowCount)
+  throw new ApiError(409,'Wallet balance unavailable');
  const totals=(await c.query(`SELECT
    COALESCE((SELECT sum(amount_minor) FROM ledger_entries WHERE wallet_id=$1),0)::text AS balance,
    COALESCE((SELECT sum(amount_minor) FROM send_money_requests WHERE wallet_id=$1 AND hold_status='held'),0)::text AS held`,[wallet.id])).rows[0];
@@ -60,7 +70,7 @@ export async function reviewSendMoney(c: PoolClient, actor: string, requestId: s
  const details=(await c.query('SELECT wallet_id FROM send_money_requests WHERE request_id=$1',[id])).rows[0];
  if(!details)throw new ApiError(404,'Request not found');
  // Every reservation writer locks the wallet before reading or changing holds.
- await c.query('SELECT id FROM wallets WHERE id=$1 FOR UPDATE',[details.wallet_id]);
+ await lockWallet(c,details.wallet_id);
  const row=(await c.query(`SELECT r.status,s.hold_status,s.payout_reference FROM service_requests r
    JOIN send_money_requests s ON s.request_id=r.id WHERE r.id=$1 AND r.request_type='send_money'
    FOR UPDATE OF r,s`,[id])).rows[0];
@@ -98,7 +108,7 @@ export async function recordSendMoneyReview(c: PoolClient, actor: string, reques
  if(kind==='recipient' && status==='admin_reviewed' && !evidence)throw new ApiError(400,'Evidence reference required');
  const wallet=(await c.query('SELECT wallet_id FROM send_money_requests WHERE request_id=$1',[id])).rows[0];
  if(!wallet)throw new ApiError(404,'Request not found');
- await c.query('SELECT id FROM wallets WHERE id=$1 FOR UPDATE',[wallet.wallet_id]);
+ await lockWallet(c,wallet.wallet_id);
  const row=(await c.query(`SELECT r.status AS request_status,s.hold_status,s.beneficiary_name,
    s.beneficiary_provider,s.beneficiary_account,s.beneficiary_bank FROM service_requests r
    JOIN send_money_requests s ON s.request_id=r.id WHERE r.id=$1 AND r.request_type='send_money'
@@ -124,7 +134,7 @@ export async function resolveFailedPayout(c: PoolClient, actor: string, requestI
  if(!['propose_failed','approve_failed'].includes(action))throw new ApiError(400,'Invalid resolution action');
  const wallet=(await c.query('SELECT wallet_id FROM send_money_requests WHERE request_id=$1',[id])).rows[0];
  if(!wallet)throw new ApiError(404,'Request not found');
- await c.query('SELECT id FROM wallets WHERE id=$1 FOR UPDATE',[wallet.wallet_id]);
+ await lockWallet(c,wallet.wallet_id);
  const row=(await c.query(`SELECT r.status,s.hold_status,s.payout_reference FROM service_requests r
    JOIN send_money_requests s ON s.request_id=r.id WHERE r.id=$1 AND r.request_type='send_money'
    FOR UPDATE OF r,s`,[id])).rows[0];
@@ -169,7 +179,7 @@ export async function recordPayoutReference(c: PoolClient, actor: string, reques
  const id=uuid(requestId), reference=text(input.payout_reference,1,120);
  const wallet=(await c.query('SELECT wallet_id FROM send_money_requests WHERE request_id=$1',[id])).rows[0];
  if(!wallet)throw new ApiError(404,'Request not found');
- await c.query('SELECT id FROM wallets WHERE id=$1 FOR UPDATE',[wallet.wallet_id]);
+ await lockWallet(c,wallet.wallet_id);
  const row=(await c.query(`SELECT r.status,s.payout_reference FROM service_requests r
    JOIN send_money_requests s ON s.request_id=r.id WHERE r.id=$1 AND r.request_type='send_money'
    FOR UPDATE OF r,s`,[id])).rows[0];
