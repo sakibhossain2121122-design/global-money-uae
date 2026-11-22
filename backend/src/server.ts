@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
 import {submission,review} from './add-money.ts';
-import { validateAccount, validateAddMoneyMethod, validateBankName, validateEnabledToggle } from './admin-control.ts';
+import { validateAccount, validateAddMoneyMethod, validateBankName, validateEnabledToggle, validateMethodCatalog } from './admin-control.ts';
 import { readReceipt, receiptReview } from './receipts.ts';
 import { walletBalance } from './wallet.ts';
 import { createSendMoney, reviewSendMoney, recordPayoutReference, recordSendMoneyReview, resolveFailedPayout, requireActiveAdmin } from './send-money.ts';
@@ -76,7 +76,7 @@ const server = createServer(async (req,res) => {
    else if(method==='GET' && path==='/v1/support') result=(await c.query('SELECT id,subject,status,created_at FROM support_tickets WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
    else if(method==='POST' && path==='/v1/support') {const b=await body(req);result=(await c.query('INSERT INTO support_tickets(customer_id,subject,message) VALUES($1,$2,$3) RETURNING id',[actor,text(b.subject),text(b.message,1,2000)])).rows[0];await audit('support.create');status=201;}
    else if(method==='GET' && path==='/v1/add-money-request-methods') {
-    result=(await c.query("SELECT id,name,country,currency FROM payment_methods WHERE country='AE' AND currency='AED' AND add_money_request_enabled=true ORDER BY display_order,id")).rows;
+    result=(await c.query("SELECT id,name,country,currency FROM payment_methods WHERE country='AE' AND currency='AED' AND add_money_request_enabled=true AND catalog_visible=true ORDER BY display_order,id")).rows;
    } else if(method==='POST' && path==='/v1/add-money-requests') {
     const b=submission(await body(req));
     // Serialize retries by customer and key. Collisions only add waiting, never authorize access.
@@ -86,7 +86,7 @@ const server = createServer(async (req,res) => {
      if(existing.amount_aed!==b.amount||existing.payment_method_id!==b.method||existing.customer_note!==b.note)throw new ApiError(409,'Submission key already used for different details');
      result={id:existing.id,status:existing.status,postingEnabled:false};
     } else {
-     const method=await c.query("SELECT id FROM payment_methods WHERE id=$1 AND country='AE' AND currency='AED' AND add_money_request_enabled=true FOR SHARE",[b.method]);
+     const method=await c.query("SELECT id FROM payment_methods WHERE id=$1 AND country='AE' AND currency='AED' AND add_money_request_enabled=true AND catalog_visible=true FOR SHARE",[b.method]);
      if(!method.rowCount)throw new ApiError(400,'Unknown AED payment method');
      const inserted=await c.query(`INSERT INTO service_requests(customer_id,request_type,amount_aed,payment_method_id,customer_note,idempotency_key)
       VALUES($1,'add_money',$2,$3,$4,$5) ON CONFLICT DO NOTHING RETURNING id,status`,[actor,b.amount,b.method,b.note,b.key]);
@@ -229,6 +229,17 @@ const server = createServer(async (req,res) => {
      await audit('admin.add_money_request.'+b.status,id);
     }
     result={id,status:b.status,postingEnabled:false};
+   } else if(method==='GET' && path==='/v1/admin/method-catalog') {
+    result=(await c.query(`SELECT id,name,country,currency,logo_url,display_order,catalog_visible
+      FROM payment_methods ORDER BY country,display_order,id`)).rows;
+   } else if(method==='PATCH' && path==='/v1/admin/method-catalog') {
+    const data=validateMethodCatalog(await body(req));
+    const updated=await c.query(`UPDATE payment_methods SET name=$2,logo_url=$3,display_order=$4,catalog_visible=$5,updated_at=now()
+      WHERE id=$1 RETURNING id,name,country,currency,logo_url,display_order,catalog_visible`,
+      [data.id,data.name,data.logo_url,data.display_order,data.catalog_visible]);
+    if(!updated.rowCount)throw new ApiError(404,'Payment method not found');
+    result=updated.rows[0];
+    await auditAdminControl('admin.method_catalog.update',data.id);
    } else if(method==='GET' && path==='/v1/admin/payment-methods') {
     result=(await c.query(`
       SELECT id,name,country,currency,display_order,add_money_request_enabled
@@ -367,8 +378,8 @@ const server = createServer(async (req,res) => {
     await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
    } else if (method === 'GET' && path === '/v1/payment-methods') {
   result = (await c.query(
-    'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods ORDER BY display_order, id'
-  )).rows.map(({ enabled, ...method }) => ({ ...method, enabled: false }));
+    'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods WHERE catalog_visible=true ORDER BY display_order, id'
+  )).rows.map(({ enabled, logo_url, ...method }) => ({ ...method, logo_url: null, enabled: false }));
 } else throw new ApiError(404,'Not found');
   }
   await c.query('COMMIT');

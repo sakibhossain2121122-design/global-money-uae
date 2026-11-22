@@ -3,11 +3,12 @@ import {createRoot} from 'react-dom/client';
 import {ReceiptReview, WalletView} from './WalletReview';
 import {ReceiptPreview} from './ReceiptPreview';
 import {SendMoneyReview} from './SendMoneyReview';
+import {MethodCatalog} from './MethodCatalog';
 import './style.css';
 
 type Row = Record<string, unknown>;
 type Tab = 'users' | 'support' | 'transactions' | 'rates' | 'add-money' |
-  'add-money-requests' | 'send-money-requests' | 'payment-accounts' | 'payout-banks';
+  'add-money-requests' | 'send-money-requests' | 'payment-accounts' | 'payout-banks' | 'method-catalog';
 
 const headings: Record<Tab, string> = {
  users:'Users',
@@ -18,7 +19,8 @@ const headings: Record<Tab, string> = {
  'add-money-requests':'Add Money Requests',
  'send-money-requests':'Send Money Requests',
  'payment-accounts':'UAE Payment Accounts',
- 'payout-banks':'Bangladesh Payout Banks'
+ 'payout-banks':'Bangladesh Payout Banks',
+ 'method-catalog':'Method Catalogue'
 };
 
 function display(value: unknown): string {
@@ -90,9 +92,10 @@ function App() {
   const data=await api<Row[]>('admin/users','GET',undefined,session.token);
   setToken(session.token);setRows(data);setEmail('');setTab('users');
  });}}><h2>Sign in</h2><label>Email<input type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" required minLength={12} maxLength={128} value={password} onChange={e=>setPassword(e.target.value)}/></label><button disabled={busy}>Sign in</button></form> : <>
- <nav>{(['users','support','transactions','rates','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});clearSession();})}>Logout</button></nav>
+ <nav>{(['users','support','transactions','rates','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks','method-catalog'] as Tab[]).map(value=><button key={value} disabled={busy} aria-pressed={tab===value} onClick={()=>changeTab(value)}>{headings[value]}</button>)}<button disabled={busy} onClick={()=>void perform(async()=>{await api('auth/logout','POST',{});clearSession();})}>Logout</button></nav>
  <section><h2>{headings[tab]}</h2>
  {tab==='add-money'&&<><p>Controls which AED payment methods customers may select for a review-only Add Money request. This does not enable payment collection or wallet credit.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh methods</button></>}
+ {tab==='method-catalog'&&<><p>Visibility controls the customer catalogue and Add Money request choices, not payments or payouts. Logo URLs are stored for review only; the app does not fetch or display them until authorized assets are verified.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh catalogue</button></>}
  {tab==='add-money-requests'&&<><p>Admin receipt review is recorded for investigation only. It does not authorize payment or wallet credit. Never treat a note or receipt alone as proof of payment.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
  {tab==='send-money-requests'&&<><p>Review-only requests reserve ledger funds. Admin reports do not independently verify recipients or payouts. Transfer, payout, and success remain disabled.</p><button disabled={busy} onClick={()=>void perform(refresh)}>Refresh requests</button></>}
  {tab==='payment-accounts'&&<><p>UAE payment account directory. Administrative status does not activate payment processing.</p><form onSubmit={e=>{e.preventDefault();if(!account.account_number.trim()&&!account.iban.trim()){setError('Enter an account number or an IBAN.');return;}void perform(async()=>{
@@ -102,10 +105,11 @@ function App() {
  });}}><h3>Add payment account</h3><label>Payment method<select required value={account.payment_method_id} onChange={e=>setAccount({...account,payment_method_id:e.target.value})}><option value="" disabled>Select AED method</option>{methods.map(method=><option key={String(method.id)} value={String(method.id)}>{display(method.name)}</option>)}</select></label><label>Account holder<input required maxLength={150} value={account.account_holder} onChange={e=>setAccount({...account,account_holder:e.target.value})}/></label><label>Account number<input autoComplete="off" maxLength={50} value={account.account_number} onChange={e=>setAccount({...account,account_number:e.target.value})}/></label><label>IBAN<input autoComplete="off" maxLength={34} value={account.iban} onChange={e=>setAccount({...account,iban:e.target.value.toUpperCase()})}/></label><label>Instructions<input maxLength={500} value={account.instructions} onChange={e=>setAccount({...account,instructions:e.target.value})}/></label><button disabled={busy||methods.length===0}>Add account (disabled by default)</button></form></>}
  {tab==='payout-banks'&&<><p>Bangladesh payout bank directory only. Bank entries do not initiate or authorize transfers.</p><form onSubmit={e=>{e.preventDefault();void perform(async()=>{await api('admin/payout-banks','POST',{name:bankName});setBankName('');await load();});}}><h3>Add Bangladesh bank</h3><label>Bank name<input required maxLength={120} value={bankName} onChange={e=>setBankName(e.target.value)}/></label><button disabled={busy}>Add bank (disabled by default)</button></form></>}
  {tab==='rates'&&<form onSubmit={e=>{e.preventDefault();void perform(async()=>{await api('admin/rates','PUT',{value:rate});setRate('');await load();});}}><p>Internal AED/BDT configuration only. Customer rates remain unavailable.</p><label>Rate<input inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,6})?" value={rate} required onChange={e=>setRate(e.target.value)}/></label><button disabled={busy}>Save configuration</button></form>}
- {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=>{
+ {rows.length===0?<p>No records.</p>:<div className="table"><table><thead><tr>{Object.keys(rows[0]).map(key=><th key={key}>{key}</th>)}{['users','support','add-money','add-money-requests','send-money-requests','payment-accounts','payout-banks','method-catalog'].includes(tab)&&<th>Action</th>}</tr></thead><tbody>{rows.map((row,i)=>{
   const id=String(row.id??i),archived=row.archived_at!==null&&row.archived_at!==undefined;
   return <tr key={id}>{Object.keys(rows[0]).map(key=><td key={key} data-label={key}>{tab==='payment-accounts'&&(key==='account_number'||key==='iban')?mask(row[key]):display(row[key])}</td>)}
   {tab==='add-money'&&<td data-label="Request availability"><button disabled={busy} onClick={()=>void perform(async()=>{await api('admin/payment-methods','PATCH',{id:row.id,add_money_request_enabled:!row.add_money_request_enabled});await load();})}>{row.add_money_request_enabled?'Disable requests':'Allow requests'}</button></td>}
+  {tab==='method-catalog'&&<td data-label="Edit"><MethodCatalog key={JSON.stringify(row)} method={{id,name:String(row.name),logo_url:typeof row.logo_url==='string'?row.logo_url:null,display_order:Number(row.display_order),catalog_visible:row.catalog_visible===true}} busy={busy} onSave={method=>void perform(async()=>{await api('admin/method-catalog','PATCH',method);await load();})}/></td>}
   {tab==='add-money-requests'&&<td data-label="Review"><label>Review note<input maxLength={500} value={reviewNotes[id]??''} onChange={e=>setReviewNotes({...reviewNotes,[id]:e.target.value})}/></label><select disabled={busy} aria-label={'Request status '+id} value={String(row.status)} onChange={e=>{const status=e.target.value;void perform(async()=>{await api('admin/add-money-requests/'+id,'PATCH',{status,expected_status:row.status,note:reviewNotes[id]??''});setEvents([]);setEventRequest('');await load();});}}>{['pending','under_review','rejected','cancelled'].map(value=><option key={value}>{value}</option>)}</select><button disabled={busy} onClick={()=>void perform(async()=>{setEvents(await api<Row[]>('admin/add-money-requests/'+id+'/events'));setEventRequest(id);})}>View audit events</button>
    {Boolean(row.receipt_id)&&<ReceiptReview status={String(row.verification_status)} busy={busy} onReview={input=>void perform(async()=>{await api('admin/add-money-requests/'+id+'/receipt','PATCH',input);setReceiptEvents([]);setReceiptRequest('');await load();})}
     onHistory={()=>void perform(async()=>{setReceiptEvents(await api<Row[]>('admin/add-money-requests/'+id+'/receipt-events'));setReceiptRequest(id);})}

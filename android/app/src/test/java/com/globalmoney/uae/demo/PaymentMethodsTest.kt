@@ -18,7 +18,7 @@ class PaymentMethodsTest {
     }
     @Test fun emptyListAndOptionalLogoAreSafe() {
         assertTrue(PaymentMethods.parse("[]").isEmpty())
-        for (logo in listOf("", ",\"logo_url\":null", ",\"logo_url\":\"\"", ",\"logo_url\":\"http://cdn.example/logo\"", ",\"logo_url\":\"https://user:secret@cdn.example/logo\"", ",\"logo_url\":\"javascript:alert(1)\"")) {
+        for (logo in listOf("", ",\"logo_url\":null", ",\"logo_url\":\"\"", ",\"logo_url\":\"http://cdn.example/logo\"", ",\"logo_url\":\"https://user:secret@cdn.example/logo\"", ",\"logo_url\":\"https://cdn.example/logo?token=secret\"", ",\"logo_url\":\"https://cdn.example/logo#secret\"", ",\"logo_url\":\"https://cdn.example:8443/logo\"", ",\"logo_url\":\"javascript:alert(1)\"")) {
             assertNull(PaymentMethods.parse("""[{"name":"পদ্ধতি","country":"BD","currency":"BDT"$logo}]""").single().logoUrl)
         }
     }

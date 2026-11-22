@@ -46,7 +46,8 @@ internal object PaymentMethods {
             val logo = (row.opt("logo_url") as? String)?.trim()?.takeIf { value ->
                 value.length <= 2048 && runCatching {
                     val uri = URI(value)
-                    uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo == null
+                    uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo == null &&
+                        uri.rawQuery == null && uri.rawFragment == null && (uri.port == -1 || uri.port == 443)
                 }.getOrDefault(false)
             }
             PaymentMethod(name, country, currency, logo)

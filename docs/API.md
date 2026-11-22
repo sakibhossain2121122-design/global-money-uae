@@ -139,6 +139,8 @@ role. Administrative changes are written to `audit_logs` and
 | --- | --- |
 | GET admin/payment-methods | AED method metadata and `add_money_request_enabled` |
 | PATCH admin/payment-methods | `{id,add_money_request_enabled:boolean}`; controls review-only request choices, not payment processing |
+| GET admin/method-catalog | UAE and Bangladesh method names, logo URL metadata, display order and visibility |
+| PATCH admin/method-catalog | `{id,name,logo_url,display_order,catalog_visible}`; display configuration only, audited |
 | GET admin/payment-accounts | Latest 100 UAE account records, including archived status |
 | POST admin/payment-accounts | `{payment_method_id,account_holder,account_number?,iban?,instructions?}`; new records start disabled |
 | PATCH admin/payment-accounts | `{id,enabled:boolean}`; archived accounts cannot be changed |
@@ -151,10 +153,18 @@ role. Administrative changes are written to `audit_logs` and
 `add_money_request_enabled` is separate from the payment-method `enabled` flag.
 The customer request-method list and request submission both enforce it; all
 existing AED methods default to request-enabled to preserve current request
-intake. `/v1/payment-methods` continues to return `enabled:false`, and no
+intake. `catalog_visible` hides a method from the customer catalogue and, for
+AED methods, from new Add Money request choices. `/v1/payment-methods` returns
+visible UAE and Bangladesh display metadata with `enabled:false`, and no
 administrative account or bank status authorizes collection, wallet credit, or
 transfers. Account numbers and IBANs are returned only to an authorized admin;
 the web panel masks them in its list.
+
+Logo URLs accept HTTPS without user information, query strings, fragments or
+nonstandard ports. They are unverified admin-only metadata; the customer API
+returns `logo_url:null` and Android does not fetch or display them. Authorized
+official assets and a separate verification process are required before logo
+rendering can be enabled.
 
 POST and all other methods to `add-money`, `botim-money`, `payments`, `transfers`, `remittances`, `wallet/credit`, `wallet/debit`, and `kyc/documents` return 503 `Service not yet available.`. There is no financial enable flag. Other unsupported routes are 404 after authentication.
 

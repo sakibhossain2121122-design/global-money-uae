@@ -10,8 +10,43 @@ after(()=>vite.close());
 const {WalletView, ReceiptReview} = await vite.ssrLoadModule('/src/WalletReview.tsx');
 const {ReceiptPreview} = await vite.ssrLoadModule('/src/ReceiptPreview.tsx');
 const {SendMoneyReview} = await vite.ssrLoadModule('/src/SendMoneyReview.tsx');
+const {MethodCatalog} = await vite.ssrLoadModule('/src/MethodCatalog.tsx');
 const sendReviewProps={recipientEventId:'0',recipientStatus:null,reconciliationEventId:'0',reconciliationStatus:null,
  onRecipient(){},onRecipientReview(){},onReconciliation(){}};
+
+test('method metadata editor does not enable payments and disables saving while busy', () => {
+ const html=renderToStaticMarkup(React.createElement(MethodCatalog,{
+  method:{id:'adcb',name:'Example',logo_url:null,display_order:3,catalog_visible:false},
+  busy:true,onSave(){}
+ }));
+ assert.match(html,/Logo URL \(HTTPS, no credentials or query\)/);
+ assert.match(html,/Visible to customers/);
+ assert.match(html,/disabled="">Save metadata/);
+ assert.doesNotMatch(html,/Enable payments/);
+});
+
+test('method metadata editor submits display settings without financial flags', async () => {
+ const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'https://admin.example/'});
+ const previousFormData=globalThis.FormData;
+ globalThis.window=dom.window;globalThis.document=dom.window.document;
+ globalThis.FormData=dom.window.FormData;globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ const {createRoot}=await import('react-dom/client');
+ const root=createRoot(document.getElementById('root'));
+ let saved;
+ try {
+  await React.act(async()=>root.render(React.createElement(MethodCatalog,{
+   method:{id:'adcb',name:'Example',logo_url:null,display_order:3,catalog_visible:true},
+   busy:false,onSave(value){saved=value;}
+  })));
+  await React.act(async()=>document.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true})));
+  assert.deepEqual(saved,{id:'adcb',name:'Example',logo_url:null,display_order:3,catalog_visible:true});
+ } finally {
+  await React.act(async()=>root.unmount());
+  dom.window.close();
+  globalThis.FormData=previousFormData;
+  delete globalThis.window;delete globalThis.document;delete globalThis.IS_REACT_ACT_ENVIRONMENT;
+ }
+});
 
 test('wallet view distinguishes unavailable from an actual zero balance', () => {
  const view = balance => renderToStaticMarkup(React.createElement(WalletView,{name:'Customer',wallet:{balance,currency:'AED',postingEnabled:false}}));

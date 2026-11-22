@@ -78,6 +78,28 @@ export function validateAddMoneyMethod(
   };
 }
 
+export function validateMethodCatalog(input: Record<string, unknown>) {
+  if (
+    Object.keys(input).some(key => !['id', 'name', 'logo_url', 'display_order', 'catalog_visible'].includes(key)) ||
+    typeof input.id !== 'string' || !/^[a-z0-9_]{2,40}$/.test(input.id) ||
+    typeof input.name !== 'string' || !input.name.trim() || input.name.trim().length > 120 ||
+    !Number.isInteger(input.display_order) || Number(input.display_order) < 0 || Number(input.display_order) > 10000 ||
+    typeof input.catalog_visible !== 'boolean' ||
+    (input.logo_url !== null && typeof input.logo_url !== 'string')
+  ) throw new ApiError(400, 'Invalid method metadata');
+
+  const logo = typeof input.logo_url === 'string' ? input.logo_url.trim() : '';
+  if (logo) {
+    let url: URL;
+    try { url = new URL(logo); } catch { throw new ApiError(400, 'Invalid logo URL'); }
+    if (logo.length > 2048 || url.protocol !== 'https:' || !url.hostname ||
+        url.username || url.password || url.search || url.hash ||
+        (url.port && url.port !== '443')) throw new ApiError(400, 'Invalid logo URL');
+  }
+  return {id:input.id, name:input.name.trim(), logo_url:logo || null,
+    display_order:input.display_order as number, catalog_visible:input.catalog_visible};
+}
+
 export function validateEnabledToggle(
   input: Record<string, unknown>
 ): { id: unknown; enabled: boolean } {

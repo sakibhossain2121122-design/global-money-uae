@@ -4,7 +4,8 @@ import {
   validateAccount,
   validateAddMoneyMethod,
   validateBankName,
-  validateEnabledToggle
+  validateEnabledToggle,
+  validateMethodCatalog
 } from './admin-control.ts';
 import {ApiError} from './security.ts';
 
@@ -21,6 +22,7 @@ test('UAE payment account data is normalized and bounded',()=>{
     iban:null,
     instructions:'Pay to company account'
   });
+
   assert.throws(()=>validateAccount({
     payment_method_id:'unknown-method',
     account_holder:'Example LLC',
@@ -38,6 +40,18 @@ test('UAE payment account data is normalized and bounded',()=>{
     account_number:null,
     iban:null
   }),ApiError);
+});
+
+test('method catalog metadata rejects credential-bearing or unsafe URLs',()=>{
+  const input={id:'adcb',name:' Example ',logo_url:'https://assets.example/logo.png',display_order:5,catalog_visible:true};
+  assert.deepEqual(validateMethodCatalog(input),{...input,name:'Example'});
+  assert.equal(validateMethodCatalog({...input,logo_url:''}).logo_url,null);
+  for(const logo_url of ['http://example.test/logo','https://user:pass@example.test/logo',
+    'https://example.test/logo?token=secret','https://example.test/logo#secret',
+    'https://example.test:8443/logo','javascript:alert(1)'])
+    assert.throws(()=>validateMethodCatalog({...input,logo_url}),ApiError);
+  for(const extra of [{enabled:true},{display_order:-1},{display_order:1.5},{name:''},{catalog_visible:'true'}])
+    assert.throws(()=>validateMethodCatalog({...input,...extra}),ApiError);
 });
 
 test('Add Money request availability accepts only its boolean control',()=>{

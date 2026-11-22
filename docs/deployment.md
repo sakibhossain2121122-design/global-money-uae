@@ -8,6 +8,15 @@ Use PostgreSQL 17 on a private network with encrypted storage, backups and verif
 
 Run `backend/src/migrate.ts` with a dedicated migration owner. The runner holds an advisory transaction lock and applies pending numbered migrations once, atomically. Do not deploy edited initial migrations to a database that has already applied them; add a numbered forward migration and extend the runner for future releases.
 
+For an existing runtime role, migration 011 must be applied before the new API
+starts. Afterwards, the migration owner must grant the additional catalogue
+columns below; the original Add Money grant remains in place. These privileges
+do not grant permission to enable payments or modify the ledger.
+
+```sql
+GRANT UPDATE(name,logo_url,display_order,catalog_visible) ON payment_methods TO gm_app;
+```
+
 Create a separate runtime role using the owner connection. Set its password interactively with `\password gm_app` or your secret provisioning system; do not place it in source or shell history:
 
 ```sql
@@ -25,7 +34,7 @@ GRANT INSERT, UPDATE ON rates TO gm_app;
 GRANT INSERT(actor_id,action,target) ON audit_logs TO gm_app;
 GRANT USAGE ON SEQUENCE audit_logs_id_seq TO gm_app;
 GRANT SELECT ON payment_methods TO gm_app;
-GRANT UPDATE(add_money_request_enabled,updated_at) ON payment_methods TO gm_app;
+GRANT UPDATE(add_money_request_enabled,name,logo_url,display_order,catalog_visible,updated_at) ON payment_methods TO gm_app;
 GRANT SELECT, INSERT, UPDATE ON company_payment_accounts, payout_banks TO gm_app;
 GRANT INSERT(admin_id,action,target_id) ON admin_control_events TO gm_app;
 GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;

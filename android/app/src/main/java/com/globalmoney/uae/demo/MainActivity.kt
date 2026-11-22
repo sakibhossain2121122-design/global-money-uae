@@ -247,6 +247,11 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                                 session.pendingSendMoney = pending
                                                 sendRecipients = data.getJSONArray("recipients")
                                                 page = "SendMoney"
+                                                paymentMethods = emptyList(); methodsLoaded = false
+                                                call({ api.paymentMethods() }) { response ->
+                                                    paymentMethods = PaymentMethods.parse(response)
+                                                    methodsLoaded = true
+                                                }
                                             }
                                         }
                                         HomeAction.REQUESTS -> call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
@@ -265,6 +270,11 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 Text(t("Supported recipient formats (not payout availability)", "প্রাপকের সমর্থিত ধরন (পেআউট উপলব্ধতার নির্দেশ নয়)"))
                                 Text("bKash · Nagad · Rocket · Upay · Bank")
                                 Text(t("Payout bank availability is not provided to customers.", "গ্রাহকদের জন্য পেআউট ব্যাংকের উপলব্ধতা দেওয়া হয় না।"))
+                                Text(t("Configured payout methods", "কনফিগার করা পেআউট পদ্ধতি"), style = MaterialTheme.typography.titleMedium)
+                                val payoutMethods = paymentMethods.filter { it.country == "BD" && it.currency == "BDT" }
+                                if (methodsLoaded && payoutMethods.isEmpty()) Text(t("No payout methods available.", "কোনো পেআউট পদ্ধতি উপলব্ধ নেই।"))
+                                if (!busy && !methodsLoaded) Text(t("Payout methods could not be loaded.", "পেআউট পদ্ধতি লোড হয়নি।"))
+                                payoutMethods.forEach { MethodCard(it.name, bn) }
                                 Text(t("A review request reserves your available balance. Only an administrator can release a reservation. No payout or debit is made.", "পর্যালোচনার অনুরোধে আপনার ব্যবহারযোগ্য ব্যালেন্স সংরক্ষিত হবে। শুধু অ্যাডমিন সংরক্ষণ মুক্ত করতে পারেন। কোনো পেআউট বা ডেবিট হবে না।"))
                                 val pending = session.pendingSendMoney
                                 val selectedRecipient = (0 until sendRecipients.length())
@@ -336,19 +346,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 if (methodsLoaded && paymentMethods.isEmpty()) Text(t("No payment methods available.", "কোনো পেমেন্ট পদ্ধতি পাওয়া যায়নি।"))
                                 if (!busy && !methodsLoaded) Text(t("Payment methods could not be loaded.", "পেমেন্ট পদ্ধতি লোড হয়নি।"))
                                 OutlinedButton(enabled = !busy, onClick = { loadPaymentMethods() }) { Text(t("Refresh", "আবার লোড করুন")) }
-                                paymentMethods.forEach { method ->
-                                    Card(Modifier.fillMaxWidth()) {
-                                        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(method.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                            Text(t("Country", "দেশ") + ": " + method.country)
-                                            Text(t("Currency", "মুদ্রা") + ": " + method.currency)
-                                            method.logoUrl?.let { logo -> Text(t("Logo URL", "লোগোর ঠিকানা") + ": " + logo, style = MaterialTheme.typography.bodySmall) }
-                                            OutlinedButton(enabled = method.enabled, onClick = {}, modifier = Modifier.fillMaxWidth()) {
-                                                Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
-                                            }
-                                        }
-                                    }
-                                }
+                                paymentMethods.forEach { method -> MethodCard(method.name, bn) }
                             }
                             "AddMoneyRequest" -> {
                                 Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ"), style = MaterialTheme.typography.titleLarge)
@@ -356,7 +354,8 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 OutlinedTextField(addAmount, { addAmount = it.take(10) }, enabled = addPayload == null && !busy, label = { Text(t("Amount (AED)", "পরিমাণ (AED)")) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                                 for (i in 0 until addMethods.length()) {
                                     val method = addMethods.getJSONObject(i)
-                                    Row { RadioButton(enabled = addPayload == null && !busy, selected = addMethod == method.getString("id"), onClick = { addMethod = method.getString("id") }); Text(method.getString("name"), modifier = Modifier.padding(top = 12.dp)) }
+                                    MethodCard(method.getString("name"), bn, selected = addMethod == method.getString("id"),
+                                        enabled = addPayload == null && !busy, onSelect = { addMethod = method.getString("id") })
                                 }
                                 if (addMethods.length() == 0) Text(t("No request methods available.", "অনুরোধের কোনো পদ্ধতি উপলব্ধ নেই।"))
                                 OutlinedTextField(addNote, { addNote = it.take(500) }, enabled = addPayload == null && !busy, label = { Text(t("Optional note (no sensitive information)", "ঐচ্ছিক নোট (সংবেদনশীল তথ্য দেবেন না)")) }, modifier = Modifier.fillMaxWidth())
