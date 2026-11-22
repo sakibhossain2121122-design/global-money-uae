@@ -7,9 +7,20 @@ export type AccountInput = {
   account_number?: string | null;
   iban?: string | null;
   instructions?: string | null;
+  qr_payload?: string | null;
 };
 
-export function validateAccount(input: AccountInput): AccountInput {
+export function validateAccount(input: Record<string, unknown>): AccountInput {
+  for (const key of ['payment_method_id','account_holder']) {
+    if(typeof input[key]!=='string')throw new ApiError(400,'Invalid account data');
+  }
+  for (const key of ['account_number','iban','instructions','qr_payload']) {
+    if(input[key]!=null && typeof input[key]!=='string')throw new ApiError(400,'Invalid account data');
+  }
+  return validateTypedAccount(input as AccountInput);
+}
+
+function validateTypedAccount(input: AccountInput): AccountInput {
   if (!/^[a-z0-9_]{2,40}$/.test(
     input.payment_method_id ?? ''
   )) {
@@ -49,11 +60,14 @@ export function validateAccount(input: AccountInput): AccountInput {
     throw new ApiError(400, 'Invalid instructions');
   }
 
+  const qr = input.qr_payload?.trim() || null;
+  if(qr && (qr.length>512 || /[\u0000-\u001f\u007f]/.test(qr)))throw new ApiError(400,'Invalid QR content');
   return {
     payment_method_id: input.payment_method_id,
     account_holder: holder,
     account_number: account,
     iban,
+    qr_payload: qr,
     instructions
   };
 }

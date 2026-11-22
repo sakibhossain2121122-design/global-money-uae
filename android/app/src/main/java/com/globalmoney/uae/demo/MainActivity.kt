@@ -63,11 +63,12 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
     var signedIn by remember { mutableStateOf(!api.token.isNullOrBlank()) }
     var page by remember { mutableStateOf("Home") }
     var register by remember { mutableStateOf(false) }
+    var mobileLogin by remember { mutableStateOf(true) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
     var mobile by remember { mutableStateOf("+971") }
-    var identityType by remember { mutableStateOf("passport") }
+    var identityType by remember { mutableStateOf("") }
     var registrationStatus by remember { mutableStateOf<String?>(null) }
     var name by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
@@ -76,6 +77,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
     var subject by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
     var rows by remember { mutableStateOf(JSONArray()) }
+    var methodDetails by remember { mutableStateOf<JSONObject?>(null) }
     var paymentMethods by remember { mutableStateOf<List<PaymentMethod>>(emptyList()) }
     var methodsLoaded by remember { mutableStateOf(false) }
     var addAmount by remember { mutableStateOf("") }
@@ -116,7 +118,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                         t("Your session changed. Please retry.", "আপনার সেশন পরিবর্তিত হয়েছে। আবার চেষ্টা করুন।")
 
                     is AccountFailure.InvalidCredentials ->
-                        t("Email or password is incorrect.", "ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।")
+                        t("Mobile number, email or password is incorrect.", "মোবাইল নম্বর, ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।")
 
                     is AccountFailure.Unavailable ->
                         t("Account service temporarily unavailable.", "অ্যাকাউন্ট সেবা সাময়িক অনুপলব্ধ।")
@@ -191,7 +193,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
         }
     }
     LaunchedEffect(signedIn) {
-        if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletAmounts = WalletAmounts(null, null); rate = null; receiptRequestId = "" }
+        if (!signedIn) { methodDetails = null; addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletAmounts = WalletAmounts(null, null); rate = null; receiptRequestId = "" }
         else loadWallet()
     }
     MaterialTheme(colorScheme = Palette) {
@@ -208,23 +210,23 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
                         Text(t(if (register) "Create account" else "Sign in", if (register) "অ্যাকাউন্ট তৈরি করুন" else "লগইন করুন"), style = MaterialTheme.typography.titleLarge)
-                        Text(t("Mobile login and SMS verification are unavailable until an approved provider is connected. Use email to sign in.", "অনুমোদিত সেবা যুক্ত না হওয়া পর্যন্ত মোবাইল লগইন ও SMS যাচাই অনুপলব্ধ। লগইনের জন্য ইমেইল ব্যবহার করুন।"))
+                        Text(t("Register without OTP. Sign in with your UAE mobile number and password. Mobile ownership is not verified.", "OTP ছাড়া নিবন্ধন করুন। ইউএই মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে লগইন করুন। মোবাইলের মালিকানা যাচাই করা হয়নি।"))
+                        if (register || mobileLogin) OutlinedTextField(mobile, { mobile = it.take(13) }, label = { Text(t("UAE mobile (+971)", "ইউএই মোবাইল (+971)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
                         if (register) {
                             Field(name, { name = it }, t("Full name", "পুরো নাম"))
-                            OutlinedTextField(mobile, { mobile = it.take(13) }, label = { Text(t("UAE mobile (+971)", "ইউএই মোবাইল (+971)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
-                            Text(t("Identity type (verification unavailable)", "পরিচয়পত্রের ধরন (যাচাই অনুপলব্ধ)"))
-                            Row {
-                                listOf("passport", "emirates_id").forEach { kind ->
+                            Text(t("Identity type (optional; verification unavailable)", "পরিচয়পত্রের ধরন (যাচাই অনুপলব্ধ)"))
+                            Column {
+                                listOf("", "passport", "emirates_id").forEach { kind ->
                                     Row {
                                         RadioButton(selected = identityType == kind, onClick = { identityType = kind })
-                                        Text(if (kind == "passport") t("Passport", "পাসপোর্ট") else t("Emirates ID", "এমিরেটস আইডি"), modifier = Modifier.padding(top = 12.dp))
+                                        Text(if (kind.isEmpty()) t("Skip", "এড়িয়ে যান") else if (kind == "passport") t("Passport", "পাসপোর্ট") else t("Emirates ID", "এমিরেটস আইডি"), modifier = Modifier.padding(top = 12.dp))
                                     }
                                 }
                             }
                             OutlinedButton(enabled = false, onClick = {}) { Text(t("Identity upload unavailable", "পরিচয়পত্র আপলোড অনুপলব্ধ")) }
-                            Text(t("Do not submit identity documents. Selection is not saved.", "পরিচয়পত্র জমা দেবেন না। নির্বাচন সংরক্ষিত হয় না।"))
+                            Text(t("Do not submit identity documents. Only the optional type preference is saved.", "পরিচয়পত্র জমা দেবেন না। শুধু ঐচ্ছিক ধরনের পছন্দ সংরক্ষিত হবে।"))
                         }
-                        OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email (required for sign-in)", "ইমেইল (লগইনের জন্য প্রয়োজন)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+                        if (register || !mobileLogin) OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email (account contact)", "ইমেইল (যোগাযোগের জন্য)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
                         if (register) OutlinedTextField(confirmPassword, { confirmPassword = it.take(128) }, label = { Text(t("Confirm password", "পাসওয়ার্ড নিশ্চিত করুন")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
                         if (register && confirmPassword.isNotEmpty() && password != confirmPassword) Text(t("Passwords do not match.", "পাসওয়ার্ড মেলেনি।"), color = MaterialTheme.colorScheme.error)
@@ -238,19 +240,24 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 Text(when (field) {
                                     Registration.Field.NAME -> t("Full name", "পুরো নাম")
                                     Registration.Field.MOBILE -> t("UAE mobile in +9715XXXXXXXX format", "+9715XXXXXXXX আকারে ইউএই মোবাইল")
-                                    Registration.Field.EMAIL -> t("Email for sign-in", "লগইনের ইমেইল")
+                                    Registration.Field.EMAIL -> t("Contact email", "যোগাযোগের ইমেইল")
                                     Registration.Field.PASSWORD -> t("Password of 12–128 characters", "১২–১২৮ অক্ষরের পাসওয়ার্ড")
                                     Registration.Field.CONFIRMATION -> t("Matching password confirmation", "একই পাসওয়ার্ড নিশ্চিত করুন")
                                 }, color = MaterialTheme.colorScheme.error)
                             }
                         }
-                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || missingFields.isEmpty()), onClick = {
-                            val payload = JSONObject().put("email", email).put("password", password).put("name", name)
+                        if (!register) TextButton(enabled = !busy, onClick = { mobileLogin = !mobileLogin; password = "" }) { Text(if (mobileLogin) t("Use email instead", "ইমেইল ব্যবহার করুন") else t("Use UAE mobile", "ইউএই মোবাইল ব্যবহার করুন")) }
+                        Button(enabled = !busy && (if (register || mobileLogin) Registration.validMobile(mobile) else email.isNotBlank()) && password.length in 12..128 && (!register || missingFields.isEmpty()), onClick = {
+                            val payload = JSONObject().put("password", password)
+                            if (register || mobileLogin) payload.put("mobile_uae", mobile) else payload.put("email", email)
                             val creating = register
-                            if (creating) payload.put("mobile_uae", mobile)
+                            if (creating) {
+                                payload.put("email", email).put("name", name)
+                                if (identityType.isNotEmpty()) payload.put("identity_kind", identityType)
+                            }
                             password = ""; confirmPassword = ""
                             call({ api.request(if (creating) "auth/register" else "auth/login", "POST", payload) }) { response ->
-                                if (creating) { register = false; notice = t("If eligible, sign in with your email. Your mobile number is not verified.", "যোগ্য হলে ইমেইল দিয়ে লগইন করুন। আপনার মোবাইল নম্বর যাচাই করা হয়নি।") }
+                                if (creating) { register = false; mobileLogin = true; notice = t("If eligible, your account is ready. Sign in with your mobile number and password. No OTP is required.", "যোগ্য হলে আপনার অ্যাকাউন্ট প্রস্তুত। মোবাইল নম্বর ও পাসওয়ার্ড দিয়ে লগইন করুন। OTP প্রয়োজন নেই।") }
                                 else { api.token = JSONObject(response).getString("token"); signedIn = true; email = ""; name = ""; page = "Home" }
                             }
                         }, modifier = Modifier.fillMaxWidth()) { Text(t(if (register) "Register" else "Sign in", if (register) "নিবন্ধন" else "লগইন")) }
@@ -381,7 +388,20 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 if (methodsLoaded && paymentMethods.isEmpty()) Text(t("No payment methods available.", "কোনো পেমেন্ট পদ্ধতি পাওয়া যায়নি।"))
                                 if (!busy && !methodsLoaded) Text(t("Payment methods could not be loaded.", "পেমেন্ট পদ্ধতি লোড হয়নি।"))
                                 OutlinedButton(enabled = !busy, onClick = { loadPaymentMethods() }) { Text(t("Refresh", "আবার লোড করুন")) }
-                                paymentMethods.forEach { method -> MethodCard(method.name, bn) }
+                                paymentMethods.forEach { method ->
+                                    MethodCard(method.name, bn, enabled = !busy, onSelect = {
+                                        methodDetails = null
+                                        call({ api.request("payment-methods/" + method.id) }) {
+                                            methodDetails = JSONObject(it); page = "PaymentMethodDetails"
+                                        }
+                                    })
+                                }
+                            }
+                            "PaymentMethodDetails" -> {
+                                methodDetails?.let { PaymentMethodDetails(it, bn) }
+                                OutlinedButton(enabled = !busy, onClick = { methodDetails = null; loadPaymentMethods() }) {
+                                    Text(t("Back to payment methods", "পেমেন্ট পদ্ধতিতে ফিরুন"))
+                                }
                             }
                             "AddMoneyRequest" -> {
                                 Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ"), style = MaterialTheme.typography.titleLarge)

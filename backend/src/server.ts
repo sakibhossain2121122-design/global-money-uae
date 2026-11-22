@@ -42,16 +42,24 @@ const server = createServer(async (req,res) => {
   let result: unknown; let status=200; let attachment: Buffer | null = null;
   if (method==='POST' && ['/v1/auth/register','/v1/auth/login'].includes(path)) {
    if (!authLimiter.allow(req.socket.remoteAddress ?? 'unknown')) throw new ApiError(429,'Too many attempts');
-   const b=await body(req); const mail=email(b.email); const pass=password(b.password);
+   const b=await body(req); const pass=password(b.password);
    if(path.endsWith('register')) {
+    const mail=email(b.email);
+    const identity=b.identity_kind==null ? null : b.identity_kind;
+    if(identity!==null && identity!=='passport' && identity!=='emirates_id') throw new ApiError(400,'Invalid identity preference');
     const hash=await hashPassword(pass);
     const mobile=b.mobile_uae===undefined ? null : uaeMobile(b.mobile_uae);
-    const inserted=await c.query("INSERT INTO customers(email,password_hash,name,mobile_uae,registration_status) VALUES($1,$2,$3,$4,'pending') ON CONFLICT(email) DO NOTHING RETURNING id",[mail,hash,text(b.name),mobile]);
+    const inserted=await c.query("INSERT INTO customers(email,password_hash,name,mobile_uae,registration_status,identity_kind) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT DO NOTHING RETURNING id",[mail,hash,text(b.name),mobile,identity]);
     if(inserted.rowCount) {actor=inserted.rows[0].id;await audit('account.register');}
     // Same response whether account exists; registration does not create a session.
     status=202;result={message:'If eligible, your account is ready. Please sign in.'};
    } else {
-    const found=await c.query('SELECT * FROM customers WHERE email=$1',[mail]); const user=found.rows[0];
+    if(b.mobile_uae!==undefined && b.email!==undefined) throw new ApiError(400,'Choose one login identifier');
+    const mobile=b.mobile_uae===undefined ? null : uaeMobile(b.mobile_uae);
+    const found=mobile===null
+      ? await c.query('SELECT * FROM customers WHERE email=$1',[email(b.email)])
+      : await c.query('SELECT * FROM customers WHERE mobile_uae=$1',[mobile]);
+    const user=found.rows[0];
     const valid=await verifyPassword(pass,user?.password_hash ?? dummyHash);
     if (!valid || !user || user.status!=='active') throw new ApiError(401,'Invalid credentials');
     actor=user.id; const bearer=token();
@@ -61,7 +69,7 @@ const server = createServer(async (req,res) => {
   } else {
    const bearer=req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
    if (!bearer) throw new ApiError(401,'Sign in required');
-   const found=await c.query("SELECT c.id,c.email,c.name,c.role,c.registration_status FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
+   const found=await c.query("SELECT c.id,c.email,c.name,c.role,c.registration_status,c.mobile_uae,c.identity_kind FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
    const user=found.rows[0];if(!user) throw new ApiError(401,'Session expired'); actor=user.id;
    if(path.startsWith('/v1/admin/') && user.role!=='admin') throw new ApiError(403,'Forbidden');
    if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
@@ -283,7 +291,7 @@ const server = createServer(async (req,res) => {
    } else if(method==='GET' && path==='/v1/admin/payment-accounts') {
     result=(await c.query(`
       SELECT id,payment_method_id,account_holder,account_number,iban,
-             instructions,enabled,archived_at,updated_at
+             instructions,qr_payload,enabled,archived_at,updated_at
       FROM company_payment_accounts
       ORDER BY created_at DESC
       LIMIT 100
@@ -292,20 +300,22 @@ const server = createServer(async (req,res) => {
     const b=await body(req);
     if(
       Object.keys(b).some(key=>![
-        'payment_method_id','account_holder','account_number','iban','instructions'
+        'payment_method_id','account_holder','account_number','iban','instructions','qr_payload'
       ].includes(key)) ||
       typeof b.payment_method_id!=='string' ||
       typeof b.account_holder!=='string' ||
       (b.account_number!=null && typeof b.account_number!=='string') ||
       (b.iban!=null && typeof b.iban!=='string') ||
-      (b.instructions!=null && typeof b.instructions!=='string')
+      (b.instructions!=null && typeof b.instructions!=='string') ||
+      (b.qr_payload!=null && typeof b.qr_payload!=='string')
     )throw new ApiError(400,'Invalid account data');
     const data=validateAccount({
       payment_method_id:b.payment_method_id,
       account_holder:b.account_holder,
       account_number:b.account_number,
       iban:b.iban,
-      instructions:b.instructions
+      instructions:b.instructions,
+      qr_payload:b.qr_payload
     });
     const paymentMethod=await c.query(
       "SELECT id FROM payment_methods WHERE id=$1 AND country='AE' AND currency='AED'",
@@ -314,13 +324,23 @@ const server = createServer(async (req,res) => {
     if(!paymentMethod.rowCount)throw new ApiError(400,'Unknown AED payment method');
     const inserted=await c.query(`
       INSERT INTO company_payment_accounts
-        (payment_method_id,account_holder,account_number,iban,instructions,enabled)
-      VALUES($1,$2,$3,$4,$5,FALSE)
+        (payment_method_id,account_holder,account_number,iban,instructions,qr_payload,enabled)
+      VALUES($1,$2,$3,$4,$5,$6,FALSE)
       RETURNING id,enabled
-    `,[data.payment_method_id,data.account_holder,data.account_number,data.iban,data.instructions]);
+    `,[data.payment_method_id,data.account_holder,data.account_number,data.iban,data.instructions,data.qr_payload]);
     result=inserted.rows[0];
     await auditAdminControl('admin.payment_account.create',inserted.rows[0].id);
     status=201;
+   } else if(method==='PUT' && /^\/v1\/admin\/payment-accounts\/[0-9a-f-]{36}$/.test(path)) {
+    const id=uuid(path.split('/').pop());
+    const b=await body(req);
+    if(Object.keys(b).some(key=>!['payment_method_id','account_holder','account_number','iban','instructions','qr_payload'].includes(key)))throw new ApiError(400,'Invalid account data');
+    const data=validateAccount(b);
+    const updated=await c.query(`UPDATE company_payment_accounts SET account_holder=$2,account_number=$3,iban=$4,instructions=$5,qr_payload=$6,updated_at=now()
+      WHERE id=$1 AND payment_method_id=$7 AND archived_at IS NULL RETURNING id,enabled`,
+      [id,data.account_holder,data.account_number,data.iban,data.instructions,data.qr_payload,data.payment_method_id]);
+    if(!updated.rowCount)throw new ApiError(404,'Account not found');
+    result=updated.rows[0];await auditAdminControl('admin.payment_account.details',id);
    } else if(method==='PATCH' && path==='/v1/admin/payment-accounts') {
     const data=validateEnabledToggle(await body(req));
     const id=uuid(data.id);
@@ -384,7 +404,7 @@ const server = createServer(async (req,res) => {
     result={id,archived:true};
     await auditAdminControl('admin.payout_bank.archive',id);
    } else if(method==='GET' && path==='/v1/admin/users')
- result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
+ result=(await c.query('SELECT id,email,name,mobile_uae,identity_kind,registration_status,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/rates') result=(await c.query('SELECT pair,value,updated_at FROM rates')).rows;
@@ -399,6 +419,13 @@ const server = createServer(async (req,res) => {
    } else if(method==='PUT' && path==='/v1/admin/rates') {
     const b=await body(req);const value=text(b.value,1,20);if(!/^\d{1,10}(\.\d{1,6})?$/.test(value)||Number(value)<=0)throw new ApiError(400,'Invalid rate');
     await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
+   } else if (method==='GET' && /^\/v1\/payment-methods\/[a-z0-9_]{2,40}$/.test(path)) {
+    const id=path.split('/').pop();
+    const method=(await c.query("SELECT id,name,country,currency,add_money_request_enabled FROM payment_methods WHERE id=$1 AND catalog_visible=true",[id])).rows[0];
+    if(!method)throw new ApiError(404,'Payment method not found');
+    const accounts=(await c.query(`SELECT id,account_holder,account_number,iban,instructions,qr_payload
+      FROM company_payment_accounts WHERE payment_method_id=$1 AND enabled=true AND archived_at IS NULL ORDER BY created_at,id LIMIT 100`,[id])).rows;
+    result={...method,accounts,paymentsEnabled:false,postingEnabled:false};
    } else if (method === 'GET' && path === '/v1/payment-methods') {
   result = (await c.query(
     'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods WHERE catalog_visible=true ORDER BY display_order, id'

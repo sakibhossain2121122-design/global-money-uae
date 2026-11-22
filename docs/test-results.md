@@ -1,3 +1,5 @@
+Current Android/Admin integration validation is recorded in [integration-audit.md](integration-audit.md). The historical results below describe earlier work.
+
 # Premium Upgrade validation — 4 November 2026 (Asia/Dhaka)
 
 Source branch: `feature/premium-upgrade`; original base: `127aa6a15778c15e1d694ceb51a991ee17da11a8`. Remote main and feature branch were not modified. GitHub push access was rejected with HTTP 403, so no PR was opened or merged. A prepared PR body is included in `docs/PR.md`.

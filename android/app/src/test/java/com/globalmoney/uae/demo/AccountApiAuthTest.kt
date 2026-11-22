@@ -80,4 +80,29 @@ class AccountApiAuthTest {
         assertEquals("test-key", JSONObject(requests[3].second.written.toString("UTF-8")).getString("idempotency_key"))
         assertEquals("GET", requests[4].second.requestMethod)
     }
+
+    @Test fun mobileLoginPostsMobileAndPasswordWithoutRequiringOtp() {
+        val connection = Connection(200, """{"token":"session"}""")
+        val api = AccountApi("https://api.example") { connection }
+        api.request("auth/login", "POST", JSONObject().put("mobile_uae", "+971501234567").put("password", "example-password"))
+        val data = JSONObject(connection.written.toString("UTF-8"))
+        assertEquals("+971501234567", data.getString("mobile_uae"))
+        assertFalse(data.has("otp"))
+        assertFalse(data.has("email"))
+        assertFalse(connection.instanceFollowRedirects)
+    }
+
+    @Test fun paymentDetailsUseAuthenticatedGetAndNeverPostPayment() {
+        val connection = Connection(200, """{"accounts":[],"paymentsEnabled":false}""")
+        val api = AccountApi("https://api.example") { url ->
+            assertEquals("https://api.example/v1/payment-methods/adcb", url.toString())
+            connection
+        }
+        api.token = "session"
+        val details = JSONObject(api.request("payment-methods/adcb"))
+        assertFalse(details.getBoolean("paymentsEnabled"))
+        assertEquals("GET", connection.requestMethod)
+        assertEquals("Bearer session", connection.getRequestProperty("Authorization"))
+        assertEquals(0, connection.written.size())
+    }
 }

@@ -42,7 +42,7 @@ try {
  await pool.query("INSERT INTO send_money_reference_events(request_id,actor_id,payout_reference) VALUES($1,$2,'LEGACY-REF')",[legacyRequest,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
  await test('migrations 009 and 010 preserve existing 008 requests and history',async()=>{
-  assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'12');
+  assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'13');
   assert.equal((await pool.query('SELECT payout_reference FROM send_money_requests WHERE request_id=$1',[legacyRequest])).rows[0].payout_reference,'LEGACY-REF');
   assert.equal((await pool.query('SELECT count(*) FROM send_money_reference_events WHERE request_id=$1',[legacyRequest])).rows[0].count,'1');
   await assert.rejects(()=>pool.query('DELETE FROM send_money_reference_events WHERE request_id=$1',[legacyRequest]),/append-only/);

@@ -8,7 +8,8 @@ import java.io.StringReader
 class PaymentMethodsTest {
     @Test fun allProviderEnableFlagsAreIgnored() {
         for (flag in listOf("true", "false", "null", "123", "\"true\"")) {
-            val method = PaymentMethods.parse("""[{"name":"Bank","country":"AE","currency":"AED","enabled":$flag,"logo_url":"https://cdn.example/logo.png"}]""").single()
+            val method = PaymentMethods.parse("""[{"id":"adcb","name":"Bank","country":"AE","currency":"AED","enabled":$flag,"logo_url":"https://cdn.example/logo.png"}]""").single()
+            assertEquals("adcb", method.id)
             assertEquals("Bank", method.name)
             assertEquals("AE", method.country)
             assertEquals("AED", method.currency)
@@ -19,17 +20,17 @@ class PaymentMethodsTest {
     @Test fun emptyListAndOptionalLogoAreSafe() {
         assertTrue(PaymentMethods.parse("[]").isEmpty())
         for (logo in listOf("", ",\"logo_url\":null", ",\"logo_url\":\"\"", ",\"logo_url\":\"http://cdn.example/logo\"", ",\"logo_url\":\"https://user:secret@cdn.example/logo\"", ",\"logo_url\":\"https://cdn.example/logo?token=secret\"", ",\"logo_url\":\"https://cdn.example/logo#secret\"", ",\"logo_url\":\"https://cdn.example:8443/logo\"", ",\"logo_url\":\"javascript:alert(1)\"")) {
-            assertNull(PaymentMethods.parse("""[{"name":"পদ্ধতি","country":"BD","currency":"BDT"$logo}]""").single().logoUrl)
+            assertNull(PaymentMethods.parse("""[{"id":"adcb","name":"পদ্ধতি","country":"BD","currency":"BDT"$logo}]""").single().logoUrl)
         }
     }
     @Test fun malformedShapesAndFieldsFailWithoutPartialResults() {
-        for (json in listOf("", "not JSON", "{}", "null", "[null]", "[42]", "[{}]", "[] trailing", """[{"name":3,"country":"AE","currency":"AED"}]""", """[{"name":"Bank","country":"UAE","currency":"AED"}]""")) {
+        for (json in listOf("", "not JSON", "{}", "null", "[null]", "[42]", "[{}]", """[{"id":"../admin/users","name":"Bank","country":"AE","currency":"AED"}]""", "[] trailing", """[{"id":"adcb","name":3,"country":"AE","currency":"AED"}]""", """[{"id":"adcb","name":"Bank","country":"UAE","currency":"AED"}]""")) {
             try { PaymentMethods.parse(json); fail("Expected invalid metadata to fail") } catch (_: JSONException) { }
         }
     }
     @Test fun responseAndListSizeAreBounded() {
         try { PaymentMethods.readLimited(StringReader("x".repeat(PaymentMethods.MAX_RESPONSE_CHARS + 1))); fail() } catch (_: JSONException) { }
-        val entry = """{"name":"Bank","country":"AE","currency":"AED"}"""
+        val entry = """{"id":"adcb","name":"Bank","country":"AE","currency":"AED"}"""
         try { PaymentMethods.parse(List(201) { entry }.joinToString(",", "[", "]")); fail() } catch (_: JSONException) { }
         assertEquals("[]", PaymentMethods.readLimited(StringReader("[]")))
     }

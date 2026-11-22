@@ -17,10 +17,10 @@ do not grant permission to enable payments or modify the ledger.
 GRANT UPDATE(name,logo_url,display_order,catalog_visible) ON payment_methods TO gm_app;
 ```
 
-After migration 012, the migration owner must also grant:
+After migrations 012 and 013, the migration owner must also grant:
 
 ```sql
-GRANT INSERT(mobile_uae,registration_status), UPDATE(registration_status) ON customers TO gm_app;
+GRANT INSERT(mobile_uae,registration_status,identity_kind), UPDATE(registration_status) ON customers TO gm_app;
 GRANT SELECT, INSERT ON registration_review_events TO gm_app;
 GRANT USAGE ON SEQUENCE registration_review_events_id_seq TO gm_app;
 ```
@@ -33,7 +33,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO gm_app;
 GRANT SELECT ON customers, sessions, beneficiaries, wallets, ledger_journals,
  ledger_entries, transactions, rates, support_tickets TO gm_app;
-GRANT INSERT(email,password_hash,name,mobile_uae,registration_status), UPDATE(name,status,registration_status) ON customers TO gm_app;
+GRANT INSERT(email,password_hash,name,mobile_uae,registration_status,identity_kind), UPDATE(name,status,registration_status) ON customers TO gm_app;
 GRANT INSERT, DELETE ON sessions TO gm_app;
 GRANT INSERT, DELETE ON beneficiaries TO gm_app;
 GRANT INSERT ON support_tickets TO gm_app;
@@ -202,3 +202,11 @@ Email/password login remains available during that migration.
 Run expired-session cleanup regularly using a privileged maintenance job (`DELETE FROM sessions WHERE expires_at < now()`), with database backups/retention governed by an approved policy. Audit records contain action, actor and target identifiers, not request bodies. Restrict audit reading to authorized operators. Monitor aggregate rejections without collecting secrets.
 
 Registration currently has no email verification, password reset, account email change or MFA flow. Provide an approved recovery process and verified-email onboarding before inviting a broad customer audience. Admin user management is suspension/reactivation, not arbitrary role assignment. User and ticket lists show the latest 100 records without pagination. No emulator/device UI acceptance test is claimed. Review Bengali wording, accessibility and small-screen behavior on devices before release.
+
+## Migration 013 preflight (approval required before any production change)
+
+This integration adds `customers.identity_kind`, a partial unique index on non-null `customers.mobile_uae`, and `company_payment_accounts.qr_payload`. It does not modify existing ledger guards or historical migrations. If legacy customers share a mobile number, migration 013 deliberately fails and the migration transaction rolls back. Review and resolve duplicates with account owners before retrying; never silently reassign a mobile number.
+
+Existing restricted runtime roles also need INSERT permission on the new `customers.identity_kind` column when migration 013 is approved. The full role setup above includes this grant. No additional wallet or ledger write grants are needed. Registration remains active automatically; `registration_status='pending'` means identity/mobile verification is pending, not a sign-in restriction. Mobile login works without OTP and must not be described as mobile ownership verification.
+
+Run local integration tests using a disposable PostgreSQL 17 database ending in `_test`; the tests erase that database's public schema. Docker/PostgreSQL are sufficient; Termux is not used. The new customer/payment integration suite uses the documented restricted runtime role. Never point it at production.

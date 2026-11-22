@@ -197,3 +197,28 @@ test('recording a verified review requires amount and reference without enabling
   delete globalThis.window;delete globalThis.document;delete globalThis.IS_REACT_ACT_ENVIRONMENT;
  }
 });
+
+const {PaymentAccountEditor}=await vite.ssrLoadModule('/src/PaymentAccountEditor.tsx');
+test('account editor preserves configured fields and never offers payment execution',()=>{
+ const html=renderToStaticMarkup(React.createElement(PaymentAccountEditor,{
+  account:{payment_method_id:'adcb',account_holder:'Example Company',account_number:'1234',iban:null,instructions:'Reference only',qr_payload:'REF-123'},busy:true,onSave(){}
+ }));
+ assert.match(html,/Example Company/);assert.match(html,/REF-123/);
+ assert.match(html,/disabled="">Save account details/);
+ assert.doesNotMatch(html,/Enable payments|Execute|Credit wallet/);
+});
+
+test('account edits submit account details and QR content without changing availability',async()=>{
+ const dom=new JSDOM('<!doctype html><div id="root"></div>',{url:'https://admin.example/'});
+ const previousFormData=globalThis.FormData;
+ globalThis.window=dom.window;globalThis.document=dom.window.document;
+ globalThis.FormData=dom.window.FormData;globalThis.IS_REACT_ACT_ENVIRONMENT=true;
+ const {createRoot}=await import('react-dom/client');const root=createRoot(document.getElementById('root'));
+ let saved;
+ const account={payment_method_id:'adcb',account_holder:'Company',account_number:'1234',iban:null,instructions:'Reference only',qr_payload:'REF-123'};
+ try {
+  await React.act(async()=>root.render(React.createElement(PaymentAccountEditor,{account,busy:false,onSave(value){saved=value;}})));
+  await React.act(async()=>document.querySelector('form').dispatchEvent(new dom.window.Event('submit',{bubbles:true,cancelable:true})));
+  assert.deepEqual(saved,account);assert.equal('enabled' in saved,false);
+ } finally {await React.act(async()=>root.unmount());dom.window.close();globalThis.FormData=previousFormData;delete globalThis.window;delete globalThis.document;}
+});

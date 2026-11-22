@@ -20,6 +20,7 @@ test('UAE payment account data is normalized and bounded',()=>{
     account_holder:'Example LLC',
     account_number:'1234 5678',
     iban:null,
+    qr_payload:null,
     instructions:'Pay to company account'
   });
 
@@ -77,4 +78,12 @@ test('account and payout-bank status updates reject unsupported fields',()=>{
   for(const name of ['', 'x'.repeat(121), 5]) {
     assert.throws(()=>validateBankName(name),ApiError);
   }
+});
+
+
+test('payment account QR and field types are bounded',()=>{
+ const base={payment_method_id:'adcb',account_holder:'Company',account_number:'1234'};
+ assert.equal(validateAccount({...base,qr_payload:'  REF-123  '}).qr_payload,'REF-123');
+ for(const extra of [{qr_payload:'x'.repeat(513)},{qr_payload:'bad\ncontent'},{account_holder:[]},{account_number:42},{instructions:{}}])
+  assert.throws(()=>validateAccount({...base,...extra}),ApiError);
 });

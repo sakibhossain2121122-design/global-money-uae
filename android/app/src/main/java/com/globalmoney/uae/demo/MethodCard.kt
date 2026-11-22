@@ -13,7 +13,7 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun MethodCard(name: String, bn: Boolean, selected: Boolean? = null, enabled: Boolean = false, onSelect: () -> Unit = {}) {
-    val action = if (selected == null) Modifier.semantics(mergeDescendants = true) { disabled() }
+    val action = if (selected == null && !enabled) Modifier.semantics(mergeDescendants = true) { disabled() }
         else Modifier.clickable(enabled = enabled, onClick = onSelect)
     OutlinedCard(modifier = Modifier.fillMaxWidth().then(action), shape = RoundedCornerShape(18.dp)) {
         Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -24,7 +24,8 @@ internal fun MethodCard(name: String, bn: Boolean, selected: Boolean? = null, en
             Column(Modifier.weight(1f)) {
                 Text(name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Text(if (selected == null) {
-                    if (bn) "পেমেন্ট উপলব্ধ নয়" else "Payments unavailable"
+                    if (enabled) { if (bn) "অ্যাকাউন্টের তথ্য দেখুন" else "View account details" }
+                    else if (bn) "পেমেন্ট উপলব্ধ নয়" else "Payments unavailable"
                 } else {
                     if (bn) "শুধু পর্যালোচনার অনুরোধ" else "Review requests only"
                 }, style = MaterialTheme.typography.bodySmall)
