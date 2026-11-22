@@ -35,13 +35,13 @@ private val Palette = lightColorScheme(primary = Red, secondary = DarkRed,
     background = Color(0xFFFFF8F8), surface = Color.White, onSurface = Color(0xFF28191B), onBackground = Color(0xFF28191B))
 
 class MainActivity : ComponentActivity() {
-    private val api: AccountApi by lazy { ViewModelProvider(this)[AccountSession::class.java].api }
+    private val session: AccountSession by lazy { ViewModelProvider(this)[AccountSession::class.java] }
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        setContent { PremiumApp(api) { work, done ->
+        setContent { PremiumApp(session) { work, done ->
             executor.execute {
                 val result = runCatching(work)
                 handler.post { if (!isDestroyed) done(result) }
@@ -56,7 +56,8 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> Unit) -> Unit) {
+private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<String>) -> Unit) -> Unit) {
+    val api = session.api
     var bn by rememberSaveable { mutableStateOf(false) }
     fun t(en: String, bengali: String) = if (bn) bengali else en
     var signedIn by remember { mutableStateOf(!api.token.isNullOrBlank()) }
@@ -80,12 +81,17 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var addKey by rememberSaveable { mutableStateOf(UUID.randomUUID().toString()) }
     var addPayload by remember { mutableStateOf<String?>(null) }
     var requestRows by remember { mutableStateOf(JSONArray()) }
+    var sendRecipients by remember { mutableStateOf(JSONArray()) }
+    var sendCustomerId by remember { mutableStateOf("") }
+    var sendAmount by remember { mutableStateOf("") }
+    var sendRecipient by remember { mutableStateOf("") }
+    var acceptReservation by remember { mutableStateOf(false) }
     var receiptRequestId by remember { mutableStateOf("") }
     var walletAmounts by remember { mutableStateOf(WalletAmounts(null, null)) }
     var rate by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
-    fun call(work: () -> String, done: (String) -> Unit = {}) {
+    fun call(work: () -> String, onFailure: (Throwable) -> Unit = {}, done: (String) -> Unit = {}) {
         busy = true; notice = ""
         run(work) { result ->
             busy = false
@@ -98,7 +104,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                         t("Cannot connect to the account service. Check internet or try later.", "অ্যাকাউন্ট সার্ভারে সংযোগ হচ্ছে না। ইন্টারনেট পরীক্ষা করে আবার চেষ্টা করুন।")
 
                     is AccountFailure.Session ->
-                        t("Session expired. Please sign in again.", "সেশনের মেয়াদ শেষ। আবার লগইন করুন।")
+                        if (session.pendingSendMoney != null)
+                            t("Session expired. Sign in and check Send Money request history before submitting again.", "সেশনের মেয়াদ শেষ। আবার লগইন করে নতুন অনুরোধের আগে অর্থ পাঠানোর ইতিহাস দেখুন।")
+                        else t("Session expired. Please sign in again.", "সেশনের মেয়াদ শেষ। আবার লগইন করুন।")
 
                     is AccountFailure.SessionChanged ->
                         t("Your session changed. Please retry.", "আপনার সেশন পরিবর্তিত হয়েছে। আবার চেষ্টা করুন।")
@@ -132,6 +140,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                 }
                 if (api.token == null && signedIn) {
                     signedIn = false
+                    session.pendingSendMoney = null
                     paymentMethods = emptyList()
                     methodsLoaded = false
                     rows = JSONArray()
@@ -141,10 +150,12 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                     subject = ""
                     message = ""
                 }
+                onFailure(error)
             }
         }
     }
     val context = LocalContext.current
+    val pendingStore = remember { PendingSendMoneyStore(context.applicationContext) }
     val receiptPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null && receiptRequestId.isNotEmpty()) {
             val id = receiptRequestId
@@ -213,7 +224,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
                             TextButton(enabled = !busy, onClick = {
                                 call({ api.request("auth/logout", "POST", JSONObject()) }) {
-                                    api.token = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
+                                    api.token = null; session.pendingSendMoney = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
                                 }
                             }) { Text(t("Logout", "লগআউট")) }
                         }
@@ -223,8 +234,18 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                     when (action) {
                                         HomeAction.ADD_MONEY -> call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
                                         HomeAction.SEND_MONEY -> {
-                                            paymentMethods = emptyList(); methodsLoaded = false
-                                            call({ api.paymentMethods() }) { paymentMethods = PaymentMethods.parse(it); methodsLoaded = true; page = "SendMoney" }
+                                            call({
+                                                JSONObject().put("customer", JSONObject(api.request("me")))
+                                                    .put("recipients", JSONArray(api.request("beneficiaries"))).toString()
+                                            }) {
+                                                val data = JSONObject(it)
+                                                val customerId = data.getJSONObject("customer").getString("id")
+                                                val pending = pendingStore.load(customerId)
+                                                sendCustomerId = customerId
+                                                session.pendingSendMoney = pending
+                                                sendRecipients = data.getJSONArray("recipients")
+                                                page = "SendMoney"
+                                            }
                                         }
                                         HomeAction.REQUESTS -> call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
                                         HomeAction.HISTORY -> call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" }
@@ -241,10 +262,67 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 Text(t("Payouts and transfers are not available.", "পেআউট ও অর্থ স্থানান্তর উপলব্ধ নয়।"))
                                 Text(t("Supported recipient formats (not payout availability)", "প্রাপকের সমর্থিত ধরন (পেআউট উপলব্ধতার নির্দেশ নয়)"))
                                 Text("bKash · Nagad · Rocket · Upay · Bank")
-                                Text(t("Configured Bangladesh payment methods", "বাংলাদেশের কনফিগার করা পেমেন্ট পদ্ধতি"))
-                                val bangladeshMethods = paymentMethods.filter { it.country == "BD" && it.currency == "BDT" }
-                                if (bangladeshMethods.isEmpty()) Text(t("No configured methods returned.", "কোনো কনফিগার করা পদ্ধতি পাওয়া যায়নি।"))
-                                bangladeshMethods.forEach { method -> Text(method.name + " · " + t("Unavailable", "অনুপলব্ধ")) }
+                                Text(t("Payout bank availability is not provided to customers.", "গ্রাহকদের জন্য পেআউট ব্যাংকের উপলব্ধতা দেওয়া হয় না।"))
+                                Text(t("A review request reserves your available balance. Only an administrator can release a reservation. No payout or debit is made.", "পর্যালোচনার অনুরোধে আপনার ব্যবহারযোগ্য ব্যালেন্স সংরক্ষিত হবে। শুধু অ্যাডমিন সংরক্ষণ মুক্ত করতে পারেন। কোনো পেআউট বা ডেবিট হবে না।"))
+                                val pending = session.pendingSendMoney
+                                val selectedRecipient = (0 until sendRecipients.length())
+                                    .map { sendRecipients.getJSONObject(it) }
+                                    .firstOrNull { it.optString("id") == sendRecipient }
+                                if (pending == null) {
+                                    OutlinedTextField(sendAmount, { sendAmount = it.take(10) }, enabled = !busy,
+                                        label = { Text(t("Amount (AED)", "পরিমাণ (AED)")) },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                    if (sendRecipients.length() == 0) Text(t("Add a recipient first.", "প্রথমে একজন প্রাপক যোগ করুন।"))
+                                    for (i in 0 until sendRecipients.length()) {
+                                        val recipient = sendRecipients.getJSONObject(i)
+                                        val id = recipient.getString("id")
+                                        Row {
+                                            RadioButton(enabled = !busy, selected = sendRecipient == id, onClick = { sendRecipient = id })
+                                            Text(recipient.getString("name") + " · " + recipient.getString("provider"), modifier = Modifier.padding(top = 12.dp))
+                                        }
+                                    }
+                                    Row {
+                                        Checkbox(checked = acceptReservation, enabled = !busy, onCheckedChange = { acceptReservation = it })
+                                        Text(t("I understand this reserves my balance for review.", "আমি বুঝেছি পর্যালোচনার জন্য আমার ব্যালেন্স সংরক্ষিত হবে।"), modifier = Modifier.padding(top = 12.dp))
+                                    }
+                                } else {
+                                    Text(t("Submission awaiting confirmation. Retry uses the same request; check request history before starting another.", "জমার নিশ্চিতকরণ অপেক্ষমাণ। আবার চেষ্টা করলে একই অনুরোধ পাঠানো হবে; নতুন অনুরোধের আগে ইতিহাস দেখুন।"))
+                                    val recipient = (0 until sendRecipients.length()).map { sendRecipients.getJSONObject(it) }
+                                        .firstOrNull { it.optString("id") == pending.beneficiaryId }
+                                    Text("AED ${pending.amount} · ${recipient?.optString("name") ?: pending.beneficiaryId}")
+                                }
+                                Button(enabled = !busy && (pending != null || (acceptReservation && AddMoneyDraft.validAmount(sendAmount) && selectedRecipient != null && SendMoneyDraft.validBeneficiary(sendRecipient))), onClick = {
+                                    val draft = pending ?: SendMoneyDraft.create(sendAmount, sendRecipient)
+                                    try {
+                                        pendingStore.save(sendCustomerId, draft)
+                                    } catch (_: IllegalStateException) {
+                                        notice = t("Could not save this request safely. Nothing was submitted.", "অনুরোধ নিরাপদে সংরক্ষণ করা যায়নি। কিছুই জমা হয়নি।")
+                                        return@Button
+                                    }
+                                    session.pendingSendMoney = draft
+                                    call({ api.request("send-money-requests", "POST", draft.payload()) }, onFailure = { error ->
+                                        if (error is AccountFailure.Rejected && error.status in listOf(400, 404, 409, 422)) {
+                                            try {
+                                                pendingStore.clear(sendCustomerId)
+                                                session.pendingSendMoney = null
+                                                notice = t("Request rejected. Check the recipient, available balance and request history before trying again.", "অনুরোধ গ্রহণ করা হয়নি। আবার চেষ্টা করার আগে প্রাপক, ব্যবহারযোগ্য ব্যালেন্স ও অনুরোধের ইতিহাস দেখুন।")
+                                            } catch (_: IllegalStateException) {
+                                                notice = t("Could not clear the saved request. Retry the same request.", "সংরক্ষিত অনুরোধ মুছতে পারেনি। একই অনুরোধ আবার পাঠান।")
+                                            }
+                                        }
+                                    }) { response ->
+                                        val result = JSONObject(response)
+                                        val status = result.getString("status")
+                                        val hold = result.getString("holdStatus")
+                                        pendingStore.clear(sendCustomerId)
+                                        notice = t("Review request: $status. Reservation: $hold. No payout was made.", "পর্যালোচনার অনুরোধ: $status। সংরক্ষণ: $hold। কোনো পেআউট করা হয়নি।")
+                                        session.pendingSendMoney = null; sendAmount = ""; sendRecipient = ""; acceptReservation = false
+                                        walletAmounts = WalletAmounts(null, null)
+                                    }
+                                }) { Text(if (pending == null) t("Submit review request", "পর্যালোচনার অনুরোধ জমা দিন") else t("Retry same request", "একই অনুরোধ পুনরায় পাঠান")) }
+                                OutlinedButton(enabled = !busy, onClick = {
+                                    call({ api.request("send-money-requests") }) { rows = JSONArray(it); page = "SendMoneyHistory" }
+                                }) { Text(t("View Send Money requests", "অর্থ পাঠানোর অনুরোধ দেখুন")) }
                                 OutlinedButton(enabled = false, onClick = {}) { Text(t("Send money unavailable", "অর্থ পাঠানো অনুপলব্ধ")) }
                                 OutlinedButton(enabled = !busy, onClick = {
                                     call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }

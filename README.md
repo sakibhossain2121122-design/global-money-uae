@@ -71,7 +71,7 @@ cd android
 
 `API_BASE_URL` must be an HTTPS origin without a path or trailing slash. The API lives below `/v1`. Without this property the app still builds, but account calls fail closed with a connection notice. No fake login or success is shown. The backend and HTTPS domain must exist for connected flows to work.
 
-The home screen reads available and reserved balances from the authenticated wallet API. Customer rates currently remain unavailable, admin-configured rates are internal only, and the API does not provide fees or customer-visible payout-bank configuration. Recipient formats do not indicate payout availability. Add Money requests and receipt uploads are for review only; wallet credits and real payouts remain disabled.
+The home screen reads available and reserved balances from the authenticated wallet API. Customer rates currently remain unavailable, admin-configured rates are internal only, and the API does not provide fees or customer-visible payout-bank configuration. Recipient formats do not indicate payout availability. Add Money requests and receipt uploads are for review only. Send Money review requests reserve available funds until an administrator releases the reservation; they do not debit the ledger or pay a recipient. Pending submissions are stored privately per backend and customer for safe retries after a lost connection or app restart. Wallet credits and real payouts remain disabled.
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
