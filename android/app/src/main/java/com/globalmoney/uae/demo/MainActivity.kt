@@ -65,6 +65,10 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
     var register by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var mobile by remember { mutableStateOf("+971") }
+    var identityType by remember { mutableStateOf("passport") }
+    var registrationStatus by remember { mutableStateOf<String?>(null) }
     var name by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
     var bank by remember { mutableStateOf("") }
@@ -204,26 +208,43 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
                         Text(t(if (register) "Create account" else "Sign in", if (register) "অ্যাকাউন্ট তৈরি করুন" else "লগইন করুন"), style = MaterialTheme.typography.titleLarge)
-                        if (register) Field(name, { name = it }, t("Full name", "পুরো নাম"))
+                        if (register) {
+                            Field(name, { name = it }, t("Full name", "পুরো নাম"))
+                            OutlinedTextField(mobile, { mobile = it.take(13) }, label = { Text(t("UAE mobile (+971)", "ইউএই মোবাইল (+971)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
+                            Text(t("Identity type (verification unavailable)", "পরিচয়পত্রের ধরন (যাচাই অনুপলব্ধ)"))
+                            Row {
+                                listOf("passport", "emirates_id").forEach { kind ->
+                                    Row {
+                                        RadioButton(selected = identityType == kind, onClick = { identityType = kind })
+                                        Text(if (kind == "passport") t("Passport", "পাসপোর্ট") else t("Emirates ID", "এমিরেটস আইডি"), modifier = Modifier.padding(top = 12.dp))
+                                    }
+                                }
+                            }
+                            OutlinedButton(enabled = false, onClick = {}) { Text(t("Identity upload unavailable", "পরিচয়পত্র আপলোড অনুপলব্ধ")) }
+                            Text(t("Do not submit identity documents. Selection is not saved.", "পরিচয়পত্র জমা দেবেন না। নির্বাচন সংরক্ষিত হয় না।"))
+                        }
                         OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                        if (register) OutlinedTextField(confirmPassword, { confirmPassword = it.take(128) }, label = { Text(t("Confirm password", "পাসওয়ার্ড নিশ্চিত করুন")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
+                        if (register && confirmPassword.isNotEmpty() && password != confirmPassword) Text(t("Passwords do not match.", "পাসওয়ার্ড মেলেনি।"), color = MaterialTheme.colorScheme.error)
                         if (password.isNotEmpty() && password.length < 12) {
                             Text(t("Enter at least 12 characters to continue.", "এগোতে কমপক্ষে ১২ অক্ষরের পাসওয়ার্ড লিখুন।"), color = MaterialTheme.colorScheme.error)
                         }
-                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || name.isNotBlank()), onClick = {
+                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || (name.isNotBlank() && Registration.validMobile(mobile) && Registration.validPasswords(password, confirmPassword))), onClick = {
                             val payload = JSONObject().put("email", email).put("password", password).put("name", name)
                             val creating = register
-                            password = ""
+                            if (creating) payload.put("mobile_uae", mobile)
+                            password = ""; confirmPassword = ""
                             call({ api.request(if (creating) "auth/register" else "auth/login", "POST", payload) }) { response ->
                                 if (creating) { register = false; notice = t("Please sign in to your account.", "আপনার অ্যাকাউন্টে লগইন করুন।") }
                                 else { api.token = JSONObject(response).getString("token"); signedIn = true; email = ""; name = ""; page = "Home" }
                             }
                         }, modifier = Modifier.fillMaxWidth()) { Text(t(if (register) "Register" else "Sign in", if (register) "নিবন্ধন" else "লগইন")) }
-                        TextButton(enabled = !busy, onClick = { register = !register; password = "" }) { Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন")) }
+                        TextButton(enabled = !busy, onClick = { register = !register; password = ""; confirmPassword = "" }) { Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন")) }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(enabled = !busy, onClick = { page = "Home"; rows = JSONArray(); loadWallet() }) { Text(t("Home", "হোম")) }
-                            TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
+                            TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { val profile = JSONObject(it); name = profile.getString("name"); registrationStatus = profile.optString("registration_status").takeIf { value -> value in listOf("pending", "verified", "rejected") }; page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
                             TextButton(enabled = !busy, onClick = {
                                 call({ api.request("auth/logout", "POST", JSONObject()) }) {
                                     api.token = null; session.pendingSendMoney = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
@@ -256,7 +277,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                         }
                                         HomeAction.REQUESTS -> call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
                                         HomeAction.HISTORY -> call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" }
-                                        HomeAction.PROFILE -> call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" }
+                                        HomeAction.PROFILE -> call({ api.request("me") }) { val profile = JSONObject(it); name = profile.getString("name"); registrationStatus = profile.optString("registration_status").takeIf { value -> value in listOf("pending", "verified", "rejected") }; page = "Profile" }
                                         HomeAction.SUPPORT -> call({ api.request("support") }) { rows = JSONArray(it); page = "Support" }
                                         HomeAction.PAYMENT_METHODS -> loadPaymentMethods()
                                         HomeAction.BENEFICIARIES -> call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }
@@ -413,6 +434,13 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                                 }
                             }
                             "Profile" -> {
+                                Text(t("Registration review", "নিবন্ধন পর্যালোচনা") + ": " + when (registrationStatus) {
+                                    "pending" -> t("Pending verification", "যাচাই অপেক্ষমাণ")
+                                    "verified" -> t("Verified by admin review", "অ্যাডমিন পর্যালোচনায় যাচাইকৃত")
+                                    "rejected" -> t("Rejected", "প্রত্যাখ্যাত")
+                                    else -> t("Unavailable", "অনুপলব্ধ")
+                                })
+                                Text(t("Identity document verification is unavailable.", "পরিচয়পত্র যাচাই অনুপলব্ধ।"))
                                 Field(name, { name = it }, t("Full name", "পুরো নাম"))
                                 Button(enabled = !busy && name.isNotBlank(), onClick = {
                                     val payload = JSONObject().put("name",name)

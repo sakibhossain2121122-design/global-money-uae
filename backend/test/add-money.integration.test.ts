@@ -19,7 +19,7 @@ async function request(path:string,method='GET',body?:unknown,bearer?:string){
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'11');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'12');
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  // Exercise an upgrade from 003 with existing request/event history, not just an empty database.
  for(const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql'])await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
@@ -28,8 +28,9 @@ try {
  const legacy=(await pool.query("INSERT INTO service_requests(customer_id,request_type,amount_aed) VALUES($1,'send_money',10) RETURNING id",[legacyCustomer])).rows[0].id;
  await pool.query("INSERT INTO service_request_events(request_id,actor_id,new_status) VALUES($1,$2,'pending')",[legacy,legacyCustomer]);
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'11');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'12');
  assert.equal((await pool.query('SELECT status FROM service_requests WHERE id=$1',[legacy])).rows[0].status,'pending');
+ assert.equal((await pool.query('SELECT registration_status FROM customers WHERE id=$1',[legacyCustomer])).rows[0].registration_status,null);
  assert.equal((await pool.query('SELECT count(*) FROM service_request_events WHERE request_id=$1',[legacy])).rows[0].count,'1');
  runtime=await createTestRuntime(pool,url);
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:runtime.url,PORT:'3108'},stdio:['ignore','ignore','pipe']});
@@ -43,6 +44,32 @@ try {
  const draft={amount_aed:'12.34',payment_method_id:'adcb',note:'Please review',idempotency_key:randomUUID()};
  let id='';
  await test('authenticated intake, ownership, idempotency and audited admin review',async t=>{
+  await t.test('new registration validates mobile but legacy clients remain compatible',async()=>{
+   const base={email:'phone@example.com',password,name:'Phone'};
+   assert.equal((await request('auth/register','POST',{...base,mobile_uae:'0501234567'})).status,400);
+   assert.equal((await request('auth/register','POST',{...base,mobile_uae:'+971501234567'})).status,202);
+   const row=(await pool.query("SELECT mobile_uae,registration_status,password_hash FROM customers WHERE email='phone@example.com'")).rows[0];
+   assert.equal(row.mobile_uae,'+971501234567');assert.equal(row.registration_status,'pending');assert.notEqual(row.password_hash,password);
+   assert.equal((await request('auth/login','POST',{email:base.email,password})).status,200);
+  });
+  await t.test('registration review is authorized, evidence-backed and append-only',async()=>{
+   const customer=(await request('me','GET',undefined,alice)).body;
+   assert.equal(customer.registration_status,'pending');
+   const review={id:customer.id,expected_status:'pending',status:'verified',note:'Reviewed independent records',evidence_reference:'CASE-123'};
+   assert.equal((await request('admin/registration-reviews','PATCH',review,alice)).status,403);
+   assert.equal((await request('admin/registration-reviews','PATCH',{...review,evidence_reference:''},admin)).status,400);
+   assert.equal((await request('admin/registration-reviews','PATCH',{...review,status:['verified']},admin)).status,400);
+   assert.equal((await request('admin/registration-reviews','PATCH',review,admin)).status,200);
+   assert.equal((await request('admin/registration-reviews','PATCH',review,admin)).status,409);
+   assert.equal((await request('me','GET',undefined,alice)).body.registration_status,'verified');
+   const events=await request('admin/registration-reviews/'+customer.id+'/events','GET',undefined,admin);
+   assert.equal(events.body.length,1);
+   assert.equal(events.body[0].evidence_reference,'CASE-123');
+   await assert.rejects(()=>pool.query('DELETE FROM registration_review_events'),/append-only/);
+   const restricted=new pg.Client({connectionString:runtime!.url});await restricted.connect();
+   try {await assert.rejects(()=>restricted.query('UPDATE registration_review_events SET note=$1',['changed']),/permission denied/);}
+   finally {await restricted.end();}
+  });
   await t.test('catalog changes are admin-only and never enable financial operations',async()=>{
    const edit={id:'bd_bkash',name:'bKash review',logo_url:'https://assets.example/logo.png',display_order:5,catalog_visible:false};
    assert.equal((await request('admin/method-catalog','GET')).status,401);

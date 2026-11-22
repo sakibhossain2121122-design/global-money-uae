@@ -4,7 +4,7 @@ Except for receipt upload and download, payloads and responses are JSON. JSON re
 
 | Method /v1 path | Body / result |
 | --- | --- |
-| POST auth/register | `{email,password,name}` → 202 with generic sign-in guidance; same response for existing email |
+| POST auth/register | `{email,password,name,mobile_uae?}` → 202 with generic sign-in guidance; same response for existing email. New Android registrations require `mobile_uae`; old clients may omit it. When present it must match `+9715` followed by eight digits. |
 | POST auth/login | `{email,password}` → `{token,expiresIn}` |
 | POST auth/logout | `{}` → revokes current token |
 | GET me | current id, email, name, role |
@@ -128,6 +128,18 @@ application and database triggers. Before enabling any debit or provider
 integration, independently review authorization, settlement, reconciliation,
 recipient verification, lock ordering and the interaction of every ledger
 writer with active holds.
+
+### Registration review
+
+New accounts receive `pending`; existing records retain a null (unknown)
+status. Authenticated `GET /v1/me` returns `registration_status`. Admin-only
+`GET /v1/admin/registration-reviews` lists customers, and
+`PATCH /v1/admin/registration-reviews` accepts `{id,expected_status,status,note,evidence_reference}`.
+The expected status can be null for legacy accounts. Verified requires a
+nonempty independent evidence reference. `GET /v1/admin/registration-reviews/:id/events`
+returns append-only review history. A verified status is an admin attestation,
+not technical verification of the evidence or identity documents; the reviewer
+must check evidence independently. It does not enable financial services.
 
 ### Payment and payout administration
 

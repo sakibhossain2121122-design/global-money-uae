@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import {test} from 'node:test';
 import {
   ApiError,
   email,
   password,
+  uaeMobile,
   hashPassword,
   verifyPassword,
   token,
@@ -20,6 +21,12 @@ test('email validation', () => {
 test('password validation', () => {
   assert.equal(password('SecurePass123!'), 'SecurePass123!');
   assert.throws(() => password('short'), ApiError);
+});
+
+test('UAE mobile numbers require international mobile format', () => {
+  assert.equal(uaeMobile('+971501234567'), '+971501234567');
+  for (const value of ['0501234567', '+971401234567', '+97150123456', '+9715012345678', null])
+    assert.throws(() => uaeMobile(value), ApiError);
 });
 
 test('password hashing and verification', async () => {

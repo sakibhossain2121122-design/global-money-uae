@@ -5,7 +5,7 @@ import { validateAccount, validateAddMoneyMethod, validateBankName, validateEnab
 import { readReceipt, receiptReview } from './receipts.ts';
 import { walletBalance } from './wallet.ts';
 import { createSendMoney, reviewSendMoney, recordPayoutReference, recordSendMoneyReview, resolveFailedPayout, requireActiveAdmin } from './send-money.ts';
-import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
+import { ApiError, text, uuid, email, password, uaeMobile, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
 pool.on('error', () => console.error(JSON.stringify({event:'database.connection.failed'})));
@@ -45,7 +45,8 @@ const server = createServer(async (req,res) => {
    const b=await body(req); const mail=email(b.email); const pass=password(b.password);
    if(path.endsWith('register')) {
     const hash=await hashPassword(pass);
-    const inserted=await c.query('INSERT INTO customers(email,password_hash,name) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING RETURNING id',[mail,hash,text(b.name)]);
+    const mobile=b.mobile_uae===undefined ? null : uaeMobile(b.mobile_uae);
+    const inserted=await c.query("INSERT INTO customers(email,password_hash,name,mobile_uae,registration_status) VALUES($1,$2,$3,$4,'pending') ON CONFLICT(email) DO NOTHING RETURNING id",[mail,hash,text(b.name),mobile]);
     if(inserted.rowCount) {actor=inserted.rows[0].id;await audit('account.register');}
     // Same response whether account exists; registration does not create a session.
     status=202;result={message:'If eligible, your account is ready. Please sign in.'};
@@ -60,7 +61,7 @@ const server = createServer(async (req,res) => {
   } else {
    const bearer=req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]{43})$/)?.[1];
    if (!bearer) throw new ApiError(401,'Sign in required');
-   const found=await c.query("SELECT c.id,c.email,c.name,c.role FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
+   const found=await c.query("SELECT c.id,c.email,c.name,c.role,c.registration_status FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
    const user=found.rows[0];if(!user) throw new ApiError(401,'Session expired'); actor=user.id;
    if(path.startsWith('/v1/admin/') && user.role!=='admin') throw new ApiError(403,'Forbidden');
    if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
@@ -229,6 +230,28 @@ const server = createServer(async (req,res) => {
      await audit('admin.add_money_request.'+b.status,id);
     }
     result={id,status:b.status,postingEnabled:false};
+   } else if(method==='GET' && path==='/v1/admin/registration-reviews') {
+    result=(await c.query("SELECT id,name,email,mobile_uae,registration_status,created_at FROM customers WHERE role='customer' ORDER BY CASE WHEN registration_status='pending' THEN 0 ELSE 1 END,created_at DESC LIMIT 100")).rows;
+   } else if(method==='PATCH' && path==='/v1/admin/registration-reviews') {
+    await requireActiveAdmin(c,user.id);
+    const b=await body(req);
+    if(Object.keys(b).some(key=>!['id','expected_status','status','note','evidence_reference'].includes(key)) ||
+      typeof b.status!=='string' || !['pending','verified','rejected'].includes(b.status) ||
+      !(b.expected_status===null || (typeof b.expected_status==='string' && ['pending','verified','rejected'].includes(b.expected_status))))
+      throw new ApiError(400,'Invalid registration review');
+    const id=uuid(b.id), note=text(b.note,1,500);
+    const evidence=b.evidence_reference==null || b.evidence_reference==='' ? null : text(b.evidence_reference,1,120);
+    if(b.status==='verified' && !evidence) throw new ApiError(400,'Independent evidence reference required');
+    const previous=(await c.query("SELECT registration_status FROM customers WHERE id=$1 AND role='customer' FOR UPDATE",[id])).rows[0];
+    if(!previous)throw new ApiError(404,'Customer not found');
+    if(previous.registration_status!==b.expected_status)throw new ApiError(409,'Registration changed');
+    await c.query('UPDATE customers SET registration_status=$1 WHERE id=$2',[b.status,id]);
+    await c.query('INSERT INTO registration_review_events(customer_id,actor_id,previous_status,new_status,note,evidence_reference) VALUES($1,$2,$3,$4,$5,$6)',[id,actor,previous.registration_status,b.status,note,evidence]);
+    await auditAdminControl('admin.registration_review.'+b.status,id);
+    result={id,registration_status:b.status,identityDocumentsAccepted:false};
+   } else if(method==='GET' && /^\/v1\/admin\/registration-reviews\/[0-9a-f-]{36}\/events$/.test(path)) {
+    const id=uuid(path.split('/')[4]);
+    result=(await c.query('SELECT id,actor_id,previous_status,new_status,note,evidence_reference,created_at FROM registration_review_events WHERE customer_id=$1 ORDER BY id',[id])).rows;
    } else if(method==='GET' && path==='/v1/admin/method-catalog') {
     result=(await c.query(`SELECT id,name,country,currency,logo_url,display_order,catalog_visible
       FROM payment_methods ORDER BY country,display_order,id`)).rows;

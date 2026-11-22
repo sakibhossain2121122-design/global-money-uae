@@ -17,6 +17,14 @@ do not grant permission to enable payments or modify the ledger.
 GRANT UPDATE(name,logo_url,display_order,catalog_visible) ON payment_methods TO gm_app;
 ```
 
+After migration 012, the migration owner must also grant:
+
+```sql
+GRANT INSERT(mobile_uae,registration_status), UPDATE(registration_status) ON customers TO gm_app;
+GRANT SELECT, INSERT ON registration_review_events TO gm_app;
+GRANT USAGE ON SEQUENCE registration_review_events_id_seq TO gm_app;
+```
+
 Create a separate runtime role using the owner connection. Set its password interactively with `\password gm_app` or your secret provisioning system; do not place it in source or shell history:
 
 ```sql
@@ -25,7 +33,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT USAGE ON SCHEMA public TO gm_app;
 GRANT SELECT ON customers, sessions, beneficiaries, wallets, ledger_journals,
  ledger_entries, transactions, rates, support_tickets TO gm_app;
-GRANT INSERT(email,password_hash,name), UPDATE(name,status) ON customers TO gm_app;
+GRANT INSERT(email,password_hash,name,mobile_uae,registration_status), UPDATE(name,status,registration_status) ON customers TO gm_app;
 GRANT INSERT, DELETE ON sessions TO gm_app;
 GRANT INSERT, DELETE ON beneficiaries TO gm_app;
 GRANT INSERT ON support_tickets TO gm_app;
@@ -38,6 +46,8 @@ GRANT UPDATE(add_money_request_enabled,name,logo_url,display_order,catalog_visib
 GRANT SELECT, INSERT, UPDATE ON company_payment_accounts, payout_banks TO gm_app;
 GRANT INSERT(admin_id,action,target_id) ON admin_control_events TO gm_app;
 GRANT USAGE ON SEQUENCE admin_control_events_id_seq TO gm_app;
+GRANT SELECT, INSERT ON registration_review_events TO gm_app;
+GRANT USAGE ON SEQUENCE registration_review_events_id_seq TO gm_app;
 ```
 
 Do not grant runtime ownership, DDL, role changes, ledger writes, transaction writes, or audit update/delete access. The registration code deliberately omits role fields. Provision admins individually through the owner connection after verifying identity and secure access. There is no default password. Add an identity-aware gateway with administrator MFA before exposing administration outside a trusted network.
@@ -167,6 +177,17 @@ independently authenticated provider confirmation and separate financial
 authorization.
 
 `backend/src/kyc.ts` describes future Emirates ID/passport verification capabilities, with `documentsAccepted:false`. No upload storage, identity-number columns, approval callbacks or document endpoint exists. Future provider work requires explicit privacy, retention, encryption and authorization design before accepting real documents.
+
+Before any identity-document feature is enabled, require explicit regulatory and
+privacy approval, a documented lawful basis, a separately reviewed authenticated
+private upload endpoint with strict streaming size/type/content validation and
+malware scanning, and encryption in transit and at rest with managed keys.
+Enforce least-privilege admin access with MFA, access and review audit events,
+documented retention/deletion and legal-hold policies, backup expiry, incident
+response, and a tested deletion process. Never put documents in source control,
+public URLs or logs. Manual review must use an approved evidence workflow.
+Registration review status is an administrative attestation only; it is not
+identity-document verification and grants no financial authorization.
 
 ## Operations and known limits
 

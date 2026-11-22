@@ -27,6 +27,11 @@ export function password(value: unknown): string {
   if (typeof value !== 'string' || value.length < 12 || value.length > 128) throw new ApiError(400, 'Password must contain 12–128 characters');
   return value;
 }
+export function uaeMobile(value: unknown): string {
+  const result = text(value, 13, 13);
+  if (!/^\+9715[0-9]{8}$/.test(result)) throw new ApiError(400, 'Invalid UAE mobile number');
+  return result;
+}
 export async function hashPassword(value: string): Promise<string> {
   const salt = randomBytes(16).toString('hex');
   return salt + ':' + (await derive(value, salt, 64) as Buffer).toString('hex');
