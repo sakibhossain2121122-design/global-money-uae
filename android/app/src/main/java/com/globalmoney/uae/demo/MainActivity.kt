@@ -23,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModelProvider
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -34,7 +35,7 @@ private val Palette = lightColorScheme(primary = Red, secondary = DarkRed,
     background = Color(0xFFFFF8F8), surface = Color.White, onSurface = Color(0xFF28191B), onBackground = Color(0xFF28191B))
 
 class MainActivity : ComponentActivity() {
-    private val api = AccountApi()
+    private val api: AccountApi by lazy { ViewModelProvider(this)[AccountSession::class.java].api }
     private val executor = Executors.newSingleThreadExecutor()
     private val handler = Handler(Looper.getMainLooper())
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -48,7 +49,6 @@ class MainActivity : ComponentActivity() {
         } }
     }
     override fun onDestroy() {
-        api.token = null
         executor.shutdownNow()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
@@ -59,8 +59,8 @@ class MainActivity : ComponentActivity() {
 private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> Unit) -> Unit) {
     var bn by rememberSaveable { mutableStateOf(false) }
     fun t(en: String, bengali: String) = if (bn) bengali else en
-    var signedIn by remember { mutableStateOf(false) }
-    var page by rememberSaveable { mutableStateOf("Home") }
+    var signedIn by remember { mutableStateOf(!api.token.isNullOrBlank()) }
+    var page by remember { mutableStateOf("Home") }
     var register by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -99,6 +99,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
 
                     is AccountFailure.Session ->
                         t("Session expired. Please sign in again.", "সেশনের মেয়াদ শেষ। আবার লগইন করুন।")
+
+                    is AccountFailure.SessionChanged ->
+                        t("Your session changed. Please retry.", "আপনার সেশন পরিবর্তিত হয়েছে। আবার চেষ্টা করুন।")
 
                     is AccountFailure.InvalidCredentials ->
                         t("Email or password is incorrect.", "ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।")

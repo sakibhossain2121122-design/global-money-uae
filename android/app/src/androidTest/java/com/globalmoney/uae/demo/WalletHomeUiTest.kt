@@ -6,6 +6,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -51,5 +52,15 @@ class WalletHomeUiTest {
         compose.onNodeWithText("—").assertExists()
         compose.onNodeWithText("Reserved balance: —").assertExists()
         compose.onNodeWithText("Exchange rate: —").assertExists()
+    }
+
+    @Test fun navigationIsDisabledWhileARequestIsPending() {
+        compose.setContent {
+            MaterialTheme {
+                Column { WalletHome(WalletAmounts(null, null), null, false, true, {}, {}) }
+            }
+        }
+        compose.onNodeWithText("Add Money").assertIsNotEnabled()
+        compose.onNodeWithText("My Requests").assertIsNotEnabled()
     }
 }

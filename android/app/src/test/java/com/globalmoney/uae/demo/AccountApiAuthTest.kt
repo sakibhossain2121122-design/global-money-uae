@@ -61,4 +61,23 @@ class AccountApiAuthTest {
         assertNull(api.token)
         assertTrue(connection.disconnected)
     }
+
+    @Test fun authenticatedWalletProfileAndAddMoneyRequestsUseBearer() {
+        val requests = mutableListOf<Pair<String, Connection>>()
+        val api = AccountApi("https://api.example") { url ->
+            Connection(200, "{}").also { requests.add(url.path to it) }
+        }
+        api.token = "session"
+        api.request("wallet")
+        api.request("me")
+        api.request("add-money-request-methods")
+        api.request("add-money-requests", "POST", JSONObject().put("idempotency_key", "test-key"))
+        api.request("add-money-requests")
+        assertEquals(listOf("/v1/wallet", "/v1/me", "/v1/add-money-request-methods",
+            "/v1/add-money-requests", "/v1/add-money-requests"), requests.map { it.first })
+        assertTrue(requests.all { it.second.getRequestProperty("Authorization") == "Bearer session" })
+        assertEquals("POST", requests[3].second.requestMethod)
+        assertEquals("test-key", JSONObject(requests[3].second.written.toString("UTF-8")).getString("idempotency_key"))
+        assertEquals("GET", requests[4].second.requestMethod)
+    }
 }
