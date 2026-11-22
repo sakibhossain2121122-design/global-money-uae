@@ -208,6 +208,7 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
                         Text(t(if (register) "Create account" else "Sign in", if (register) "অ্যাকাউন্ট তৈরি করুন" else "লগইন করুন"), style = MaterialTheme.typography.titleLarge)
+                        Text(t("Mobile login and SMS verification are unavailable until an approved provider is connected. Use email to sign in.", "অনুমোদিত সেবা যুক্ত না হওয়া পর্যন্ত মোবাইল লগইন ও SMS যাচাই অনুপলব্ধ। লগইনের জন্য ইমেইল ব্যবহার করুন।"))
                         if (register) {
                             Field(name, { name = it }, t("Full name", "পুরো নাম"))
                             OutlinedTextField(mobile, { mobile = it.take(13) }, label = { Text(t("UAE mobile (+971)", "ইউএই মোবাইল (+971)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), modifier = Modifier.fillMaxWidth())
@@ -223,20 +224,33 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                             OutlinedButton(enabled = false, onClick = {}) { Text(t("Identity upload unavailable", "পরিচয়পত্র আপলোড অনুপলব্ধ")) }
                             Text(t("Do not submit identity documents. Selection is not saved.", "পরিচয়পত্র জমা দেবেন না। নির্বাচন সংরক্ষিত হয় না।"))
                         }
-                        OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email (required for sign-in)", "ইমেইল (লগইনের জন্য প্রয়োজন)")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
                         if (register) OutlinedTextField(confirmPassword, { confirmPassword = it.take(128) }, label = { Text(t("Confirm password", "পাসওয়ার্ড নিশ্চিত করুন")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
                         if (register && confirmPassword.isNotEmpty() && password != confirmPassword) Text(t("Passwords do not match.", "পাসওয়ার্ড মেলেনি।"), color = MaterialTheme.colorScheme.error)
                         if (password.isNotEmpty() && password.length < 12) {
                             Text(t("Enter at least 12 characters to continue.", "এগোতে কমপক্ষে ১২ অক্ষরের পাসওয়ার্ড লিখুন।"), color = MaterialTheme.colorScheme.error)
                         }
-                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || (name.isNotBlank() && Registration.validMobile(mobile) && Registration.validPasswords(password, confirmPassword))), onClick = {
+                        val missingFields = if (register) Registration.missingFields(name, mobile, email, password, confirmPassword) else emptyList()
+                        if (register && missingFields.isNotEmpty()) {
+                            Text(t("To enable registration, complete:", "নিবন্ধন চালু করতে পূরণ করুন:"))
+                            missingFields.forEach { field ->
+                                Text(when (field) {
+                                    Registration.Field.NAME -> t("Full name", "পুরো নাম")
+                                    Registration.Field.MOBILE -> t("UAE mobile in +9715XXXXXXXX format", "+9715XXXXXXXX আকারে ইউএই মোবাইল")
+                                    Registration.Field.EMAIL -> t("Email for sign-in", "লগইনের ইমেইল")
+                                    Registration.Field.PASSWORD -> t("Password of 12–128 characters", "১২–১২৮ অক্ষরের পাসওয়ার্ড")
+                                    Registration.Field.CONFIRMATION -> t("Matching password confirmation", "একই পাসওয়ার্ড নিশ্চিত করুন")
+                                }, color = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || missingFields.isEmpty()), onClick = {
                             val payload = JSONObject().put("email", email).put("password", password).put("name", name)
                             val creating = register
                             if (creating) payload.put("mobile_uae", mobile)
                             password = ""; confirmPassword = ""
                             call({ api.request(if (creating) "auth/register" else "auth/login", "POST", payload) }) { response ->
-                                if (creating) { register = false; notice = t("Please sign in to your account.", "আপনার অ্যাকাউন্টে লগইন করুন।") }
+                                if (creating) { register = false; notice = t("If eligible, sign in with your email. Your mobile number is not verified.", "যোগ্য হলে ইমেইল দিয়ে লগইন করুন। আপনার মোবাইল নম্বর যাচাই করা হয়নি।") }
                                 else { api.token = JSONObject(response).getString("token"); signedIn = true; email = ""; name = ""; page = "Home" }
                             }
                         }, modifier = Modifier.fillMaxWidth()) { Text(t(if (register) "Register" else "Sign in", if (register) "নিবন্ধন" else "লগইন")) }

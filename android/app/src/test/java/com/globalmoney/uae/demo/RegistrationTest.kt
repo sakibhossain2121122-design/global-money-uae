@@ -16,4 +16,11 @@ class RegistrationTest {
         assertFalse(Registration.validPasswords("abcdefghijkl", "abcdefghijkm"))
         assertFalse(Registration.validPasswords("x".repeat(129), "x".repeat(129)))
     }
+
+    @Test fun registrationExplainsEveryMissingRequirement() {
+        assertEquals(Registration.Field.entries, Registration.missingFields("", "+971", "", "", ""))
+        assertEquals(listOf(Registration.Field.MOBILE, Registration.Field.CONFIRMATION),
+            Registration.missingFields("Name", "0501234567", "a@example.com", "abcdefghijkl", "different"))
+        assertTrue(Registration.missingFields("Name", "+971501234567", "a@example.com", "abcdefghijkl", "abcdefghijkl").isEmpty())
+    }
 }

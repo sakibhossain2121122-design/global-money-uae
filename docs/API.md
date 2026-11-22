@@ -4,7 +4,7 @@ Except for receipt upload and download, payloads and responses are JSON. JSON re
 
 | Method /v1 path | Body / result |
 | --- | --- |
-| POST auth/register | `{email,password,name,mobile_uae?}` → 202 with generic sign-in guidance; same response for existing email. New Android registrations require `mobile_uae`; old clients may omit it. When present it must match `+9715` followed by eight digits. |
+| POST auth/register | `{email,password,name,mobile_uae?}` → 202 with generic sign-in guidance; same response for existing email. New Android registrations require `mobile_uae`; old clients may omit it. When present it must match `+9715` followed by eight digits. The number is not verified and is not a login identifier. |
 | POST auth/login | `{email,password}` → `{token,expiresIn}` |
 | POST auth/logout | `{}` → revokes current token |
 | GET me | current id, email, name, role |

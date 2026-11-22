@@ -189,6 +189,14 @@ public URLs or logs. Manual review must use an approved evidence workflow.
 Registration review status is an administrative attestation only; it is not
 identity-document verification and grants no financial authorization.
 
+Mobile numbers collected during registration are unverified and may be
+duplicated. They must not be used for authentication or marked verified from
+an administrative registration review. Mobile login and OTP remain unavailable
+until an authorized provider and a reviewed, replay-resistant ownership
+verification and account-binding process are in place, including rate limits,
+expiry, uniqueness, number reassignment and safe recovery for existing users.
+Email/password login remains available during that migration.
+
 ## Operations and known limits
 
 Run expired-session cleanup regularly using a privileged maintenance job (`DELETE FROM sessions WHERE expires_at < now()`), with database backups/retention governed by an approved policy. Audit records contain action, actor and target identifiers, not request bodies. Restrict audit reading to authorized operators. Monitor aggregate rejections without collecting secrets.
