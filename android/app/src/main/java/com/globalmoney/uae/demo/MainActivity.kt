@@ -133,7 +133,9 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
 
                 if (page == "AddMoneyRequest" && error is AccountFailure.Rejected && error.status in listOf(400, 409, 422)) {
                     addPayload = null; addKey = UUID.randomUUID().toString()
-                    notice = if (error.status == 409) "A matching request may already exist. Check My Add Money Requests." else "Check the amount, payment method and note, then try again."
+                    notice = if (error.status == 409)
+                        t("A matching request may already exist. Check My Add Money Requests.", "একই অনুরোধ আগে জমা থাকতে পারে। অর্থ যোগ করার অনুরোধের তালিকা দেখুন।")
+                    else t("Check the amount, payment method and note, then try again.", "পরিমাণ, পেমেন্ট পদ্ধতি ও নোট পরীক্ষা করে আবার চেষ্টা করুন।")
                 }
                 if (page == "AddMoneyHistory" && error is AccountFailure.Rejected && error.status in listOf(400, 409, 413, 415)) {
                     notice = t("Receipt rejected. Check its type and size, or whether it was already submitted.", "রসিদ গ্রহণ করা হয়নি। ফাইলের ধরন, আকার বা পূর্বে জমা হয়েছে কি না পরীক্ষা করুন।")
@@ -351,33 +353,33 @@ private fun PremiumApp(session: AccountSession, run: (() -> String, (Result<Stri
                             "AddMoneyRequest" -> {
                                 Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ"), style = MaterialTheme.typography.titleLarge)
                                 Text(t("Request only. No money moves or wallet credit. Upload a receipt from request history; do not include credentials or identity documents.", "শুধু অনুরোধ। অর্থ লেনদেন বা ওয়ালেটে জমা হবে না। অনুরোধ তালিকা থেকে রসিদ জমা দিন; পেমেন্ট তথ্য বা পরিচয়পত্র দেবেন না।"))
-                                OutlinedTextField(addAmount, { addAmount = it.take(10) }, enabled = addPayload == null && !busy, label = { Text("Amount (AED)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
+                                OutlinedTextField(addAmount, { addAmount = it.take(10) }, enabled = addPayload == null && !busy, label = { Text(t("Amount (AED)", "পরিমাণ (AED)")) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                                 for (i in 0 until addMethods.length()) {
                                     val method = addMethods.getJSONObject(i)
                                     Row { RadioButton(enabled = addPayload == null && !busy, selected = addMethod == method.getString("id"), onClick = { addMethod = method.getString("id") }); Text(method.getString("name"), modifier = Modifier.padding(top = 12.dp)) }
                                 }
-                                if (addMethods.length() == 0) Text("No request methods available.")
-                                OutlinedTextField(addNote, { addNote = it.take(500) }, enabled = addPayload == null && !busy, label = { Text("Optional note (no sensitive information)") }, modifier = Modifier.fillMaxWidth())
-                                if (addPayload != null) Text("Submission awaiting confirmation. Retry sends the same request. Check My Add Money Requests before starting another.")
+                                if (addMethods.length() == 0) Text(t("No request methods available.", "অনুরোধের কোনো পদ্ধতি উপলব্ধ নেই।"))
+                                OutlinedTextField(addNote, { addNote = it.take(500) }, enabled = addPayload == null && !busy, label = { Text(t("Optional note (no sensitive information)", "ঐচ্ছিক নোট (সংবেদনশীল তথ্য দেবেন না)")) }, modifier = Modifier.fillMaxWidth())
+                                if (addPayload != null) Text(t("Submission awaiting confirmation. Retry sends the same request. Check My Add Money Requests before starting another.", "জমার নিশ্চিতকরণ অপেক্ষমাণ। আবার চেষ্টা করলে একই অনুরোধ পাঠানো হবে। নতুন অনুরোধের আগে অর্থ যোগ করার অনুরোধের তালিকা দেখুন।"))
                                 Button(enabled = !busy && (addPayload != null || (AddMoneyDraft.validAmount(addAmount) && addMethod.isNotEmpty())), onClick = {
                                     val payload = addPayload ?: JSONObject().put("amount_aed", addAmount).put("payment_method_id", addMethod).put("note", addNote).put("idempotency_key", addKey).toString().also { addPayload = it }
                                     call({ api.request("add-money-requests", "POST", JSONObject(payload)) }) {
                                         val result = JSONObject(it)
-                                        notice = "Request " + result.getString("id") + " • " + result.getString("status") + ". No money moved."
+                                        notice = t("Request ", "অনুরোধ ") + result.getString("id") + " • " + result.getString("status") + t(". No money moved.", "। কোনো অর্থ স্থানান্তর হয়নি।")
                                         addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; page = "Home"
                                     }
-                                }) { Text(if (addPayload == null) "Submit request only" else "Retry same request") }
-                                TextButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" } }) { Text("My Add Money Requests") }
+                                }) { Text(if (addPayload == null) t("Submit request only", "শুধু অনুরোধ জমা দিন") else t("Retry same request", "একই অনুরোধ পুনরায় পাঠান")) }
+                                TextButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" } }) { Text(t("My Add Money Requests", "অর্থ যোগ করার আমার অনুরোধ")) }
                             }
                             "AddMoneyHistory" -> {
                                 Text(t("My Requests", "আমার অনুরোধ"), style = MaterialTheme.typography.titleLarge)
                                 TextButton(enabled = !busy, onClick = {
                                     call({ api.request("send-money-requests") }) { rows = JSONArray(it); page = "SendMoneyHistory" }
                                 }) { Text(t("View Send Money requests", "অর্থ পাঠানোর অনুরোধ দেখুন")) }
-                                Text("My Add Money Requests", style = MaterialTheme.typography.titleMedium)
-                                Text("Review status only. No balance adjustment or payment processing.")
-                                OutlinedButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it) } }) { Text("Refresh statuses") }
-                                if (requestRows.length() == 0) Text("No requests.")
+                                Text(t("My Add Money Requests", "অর্থ যোগ করার আমার অনুরোধ"), style = MaterialTheme.typography.titleMedium)
+                                Text(t("Review status only. No balance adjustment or payment processing.", "শুধু পর্যালোচনার অবস্থা। ব্যালেন্স পরিবর্তন বা পেমেন্ট প্রক্রিয়া করা হয় না।"))
+                                OutlinedButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it) } }) { Text(t("Refresh statuses", "অবস্থা আবার দেখুন")) }
+                                if (requestRows.length() == 0) Text(t("No requests.", "কোনো অনুরোধ নেই।"))
                                 for (i in 0 until requestRows.length()) {
                                     val row = requestRows.getJSONObject(i)
                                     Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
