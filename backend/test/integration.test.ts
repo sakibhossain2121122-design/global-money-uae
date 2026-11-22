@@ -1,9 +1,9 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import pg from 'pg';
-import {readFile} from 'node:fs/promises';
+import {requestJson} from './http-client.ts';
 const url=process.env.TEST_DATABASE_URL;
 if(!url || !new URL(url).pathname.endsWith('_test')) throw new Error('TEST_DATABASE_URL must point to a disposable database ending in _test');
 const pool=new pg.Pool({connectionString:url});
@@ -12,12 +12,11 @@ const child=spawn(process.execPath,['src/server.ts'],{cwd:new URL('..',import.me
 child.stderr.on('data',()=>{}); // Server rejection events contain no request secrets.
 const endpoint='http://127.0.0.1:'+port+'/v1/';
 async function request(path:string,method='GET',body?:unknown,token?:string){
- const r=await fetch(endpoint+path,{method,headers:{'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},body:body===undefined?undefined:JSON.stringify(body)});
- return {status:r.status,body:await r.json()};
+ return requestJson(endpoint+path,method,body,token);
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
- await pool.query(await readFile(new URL('../migrations/001_foundation.sql',import.meta.url),'utf8'));
+ execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
  let ready=false;
  for(let n=0;n<50;n++){try{const r=await fetch('http://127.0.0.1:'+port+'/health');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
  assert(ready,'API did not start');

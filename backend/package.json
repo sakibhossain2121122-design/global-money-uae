@@ -6,13 +6,15 @@
   "start": "node src/server.ts",
   "migrate": "node src/migrate.ts",
   "bootstrap-admin": "node src/bootstrap-admin.ts",
-  "test": "node --test src/security.test.ts src/add-money.test.ts",
+  "test": "node --test src/security.test.ts src/add-money.test.ts src/admin-control.test.ts src/receipts.test.ts && node --experimental-test-module-mocks --test test/wallet.test.mjs",
   "typecheck": "tsc --noEmit",
-  "test:integration": "node test/integration.test.ts && node test/add-money.integration.test.ts",
+  "test:integration": "node test/integration.test.ts && node test/add-money.integration.test.ts && node --experimental-test-module-mocks test/wallet-receipts.integration.test.ts && node test/send-money.integration.test.ts && node test/customer-payment.integration.test.ts",
   "test:payment-methods": "node --experimental-test-module-mocks test/payment-methods-readonly.test.mjs"
 },
 "dependencies": {
-    "pg": "8.16.3"
+    "pg": "8.16.3",
+    "pdf-lib": "1.17.1",
+    "sharp": "0.35.5"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

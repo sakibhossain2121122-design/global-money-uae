@@ -1,17 +1,23 @@
 package com.globalmoney.uae.demo
 
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicReference
 
 /** User-facing errors. Never expose secrets or raw server responses. */
 internal sealed class AccountFailure(message: String) : Exception(message) {
     class NotConfigured : AccountFailure("Account service is not configured.")
     class Network : AccountFailure("Cannot connect to the account service.")
     class Session : AccountFailure("Your session has expired. Please sign in again.")
+    class SessionChanged : AccountFailure("Your session changed. Please retry.")
+    class InvalidCredentials : AccountFailure("Mobile number, email or password is incorrect.")
     class Rejected(val status: Int) : AccountFailure("Account request was rejected ($status).")
     class Unavailable : AccountFailure("Account service is temporarily unavailable.")
+    class InvalidReceipt : AccountFailure("Choose a JPG, PNG or PDF receipt of at most 5 MB.")
 }
 
 /** HTTPS only. Tokens remain in process memory. */
@@ -24,12 +30,33 @@ internal class AccountApi(
 
 
 
-    @Volatile var token: String? = null
+    private val sessionToken = AtomicReference<String?>(null)
+    var token: String?
+        get() = sessionToken.get()
+        set(value) { sessionToken.set(value) }
     fun paymentMethods(): String {
         check(!token.isNullOrBlank()) { "Sign in required" }
         return request("payment-methods")
     }
-    fun request(path: String, method: String = "GET", data: JSONObject? = null): String {
+    fun request(path: String, method: String = "GET", data: JSONObject? = null): String =
+        send(path, method, data?.toString()?.toByteArray(Charsets.UTF_8), "application/json")
+
+    fun uploadReceipt(requestId: String, contentType: String?, input: InputStream): String {
+        val bytes = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        input.use {
+            if (contentType !in listOf("image/jpeg", "image/png", "application/pdf")) throw AccountFailure.InvalidReceipt()
+            while (true) {
+                val count = it.read(buffer)
+                if (count < 0) break
+                if (bytes.size() + count > 5 * 1024 * 1024) throw AccountFailure.InvalidReceipt()
+                bytes.write(buffer, 0, count)
+            }
+        }
+        return send("add-money-requests/$requestId/receipt", "PUT", bytes.toByteArray(), contentType!!)
+    }
+
+    private fun send(path: String, method: String, data: ByteArray?, contentType: String): String {
 if (!baseUrl.startsWith("https://")) {
             throw AccountFailure.NotConfigured()
         }
@@ -45,16 +72,24 @@ if (!baseUrl.startsWith("https://")) {
             connection.instanceFollowRedirects = false
             connection.requestMethod = method
             connection.setRequestProperty("Accept", "application/json")
-            token?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
+            val requestToken = token
+            requestToken?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
             if (data != null) {
                 connection.doOutput = true
-                connection.setRequestProperty("Content-Type", "application/json")
-                connection.outputStream.use { it.write(data.toString().toByteArray(Charsets.UTF_8)) }
+                connection.setRequestProperty("Content-Type", contentType)
+                connection.setFixedLengthStreamingMode(data.size)
+                connection.outputStream.use { it.write(data) }
             }
-val status = connection.responseCode
-if (status == 401) {
-                token = null
-                throw AccountFailure.Session()
+            val status = connection.responseCode
+            if (status == 401 && path == "auth/login") {
+                throw AccountFailure.InvalidCredentials()
+            }
+            if (status == 401 && path == "auth/register") {
+                throw AccountFailure.Rejected(status)
+            }
+            if (status == 401) {
+                if (sessionToken.compareAndSet(requestToken, null)) throw AccountFailure.Session()
+                throw AccountFailure.SessionChanged()
             }
 
             if (status >= 500) {
@@ -66,7 +101,7 @@ if (status == 401) {
             }
 
             return connection.inputStream.bufferedReader(Charsets.UTF_8).use {
-                if (path == "payment-methods") {
+                if (path == "payment-methods" || path.startsWith("payment-methods/")) {
                     PaymentMethods.readLimited(it)
                 } else {
                     it.readText()

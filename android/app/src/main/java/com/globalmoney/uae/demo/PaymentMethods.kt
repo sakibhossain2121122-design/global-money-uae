@@ -9,7 +9,7 @@ import java.net.URI
 
 /** Display metadata only: provider flags never grant permission to move money. */
 internal data class PaymentMethod(
-    val name: String, val country: String, val currency: String, val logoUrl: String?
+    val name: String, val country: String, val currency: String, val logoUrl: String?, val id: String
 ) {
     val enabled: Boolean get() = false
 }
@@ -37,6 +37,8 @@ internal object PaymentMethods {
                 val value = row.opt(key) as? String ?: throw JSONException("Invalid payment method field")
                 return value.trim().also { if (it.isEmpty() || it.length > max) throw JSONException("Invalid payment method field") }
             }
+            val id = field("id", 40)
+            if (!id.matches(Regex("[a-z0-9_]{2,40}"))) throw JSONException("Invalid payment method identifier")
             val name = field("name", 120)
             val country = field("country", 2)
             val currency = field("currency", 3)
@@ -46,10 +48,11 @@ internal object PaymentMethods {
             val logo = (row.opt("logo_url") as? String)?.trim()?.takeIf { value ->
                 value.length <= 2048 && runCatching {
                     val uri = URI(value)
-                    uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo == null
+                    uri.scheme == "https" && !uri.host.isNullOrEmpty() && uri.userInfo == null &&
+                        uri.rawQuery == null && uri.rawFragment == null && (uri.port == -1 || uri.port == 443)
                 }.getOrDefault(false)
             }
-            PaymentMethod(name, country, currency, logo)
+            PaymentMethod(name, country, currency, logo, id)
         }
     }
 }

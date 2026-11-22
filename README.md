@@ -6,9 +6,9 @@ Financial services are disabled. No provider integration, partnership, regulator
 
 ## Source layout
 
-- `android/`: emerald, navy, white and gold customer app; English/Bengali switch; registration, login, logout, profile, beneficiaries and support tickets connected to the API.
+- `android/`: red-and-white customer wallet app; English/Bengali switch; registration, login, logout, profile, beneficiaries and support tickets connected to the API.
 - `backend/`: validated APIs, scrypt password hashing, opaque revocable eight-hour sessions, authorization, bounded requests, rate limits, audit logging, migrations and tests.
-- `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rate configuration and read-only transaction review.
+- `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rates, Add Money review, Send Money reservations, recipient reviews and reconciliation reports, UAE payment accounts and Bangladesh payout bank directories. These reviews do not confirm payment or recipient ownership. Payment, wallet-credit and transfer processing remain disabled.
 - `docs/deployment.md`: secure setup, roles, service hosting and operational boundaries.
 - `docs/API.md`: account API contracts.
 - `docs/add-money-requests.md`: Add Money request, deduplication and admin review contracts.
@@ -50,7 +50,7 @@ npm --prefix admin run build
 python3 android/tools/check_project.py
 ```
 
-Integration tests destroy the `public` schema of a **disposable** database whose name ends in `_test`:
+Integration tests destroy the `public` schema of a **disposable** database whose name ends in `_test`. The test database owner must be able to create and drop disposable login roles; the API is exercised using a separate restricted runtime login:
 
 ```sh
 cd backend
@@ -71,15 +71,13 @@ cd android
 
 `API_BASE_URL` must be an HTTPS origin without a path or trailing slash. The API lives below `/v1`. Without this property the app still builds, but account calls fail closed with a connection notice. No fake login or success is shown. The backend and HTTPS domain must exist for connected flows to work.
 
+The home screen reads available and reserved balances from the authenticated wallet API. Customer rates currently remain unavailable, admin-configured rates are internal only, and the API does not provide fees or customer-visible payout-bank configuration. Recipient formats do not indicate payout availability. Add Money requests and receipt uploads are for review only. Send Money review requests reserve available funds until an administrator releases the reservation; they do not debit the ledger or pay a recipient. Pending submissions are stored privately per backend and customer for safe retries after a lost connection or app restart. Wallet credits and real payouts remain disabled.
+
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
 
-The existing `.github/workflows/android.yml` is unchanged and continues to build/test/upload the debug APK on Android pushes or manual dispatch. To build a connected APK in that workflow without editing its steps, add this **non-secret** origin to `android/gradle.properties` on the feature branch:
+The Android workflow builds, tests and uploads the debug APK on Android pushes or manual dispatch. Set the **non-secret** repository Actions variable `STAGING_API_BASE_URL` to the approved HTTPS origin; the workflow passes it as the Gradle property `API_BASE_URL`.
 
-```properties
-API_BASE_URL=https://YOUR-API-DOMAIN
-```
-
-Run **GLOBAL MONEY UAE Android APK** with `feature/premium-upgrade` selected, then download `global-money-uae-debug-apk` promptly (the existing retention is three days). Do not replace the old working APK until you have tested the new artifact.
+Run **GLOBAL MONEY UAE Android APK** with `feature/admin-control-system` selected, then download `global-money-uae-debug-apk` promptly (retention is three days). Do not replace the old working APK until you have tested the new artifact.
 
 ## Apply the delivery in Codespaces
 
@@ -105,4 +103,4 @@ If the feature branch has changed since the recorded base, resolve the patch aga
 
 ## Boundaries
 
-Sessions live only in client memory. Activity destruction, app process termination or browser reload requires login again; server sessions expire after eight hours, and logout revokes the token. Registration has no email verification or password recovery yet. Admin MFA, distributed rate limiting, pagination beyond the latest 100 rows, external monitoring and a reviewed privacy/retention policy remain deployment hardening work. Do not describe this foundation as a licensed financial service or a completed KYC integration.
+Sessions live only in client memory. Android retains its session across Activity configuration changes but requires login after the Activity is finished or the process terminates; browser reload also requires login again. Server sessions expire after eight hours, and logout revokes the token. Registration has no email verification or password recovery yet. Admin MFA, distributed rate limiting, pagination beyond the latest 100 rows, external monitoring and a reviewed privacy/retention policy remain deployment hardening work. Do not describe this foundation as a licensed financial service or a completed KYC integration.
