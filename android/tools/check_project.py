@@ -13,6 +13,7 @@ required = [
     'app/src/main/AndroidManifest.xml',
     'app/src/main/java/com/globalmoney/uae/demo/MainActivity.kt',
     'app/src/main/java/com/globalmoney/uae/demo/AccountApi.kt',
+    'app/src/main/java/com/globalmoney/uae/demo/WalletHome.kt',
 ]
 for name in required:
     path = root / name
@@ -44,8 +45,9 @@ application = manifest.find('application')
 assert application.attrib[ns + 'allowBackup'] == 'false'
 assert application.attrib[ns + 'usesCleartextTraffic'] == 'false'
 ui = (root / 'app/src/main/java/com/globalmoney/uae/demo/MainActivity.kt').read_text()
-assert 'DEMO' not in ui and '2,450' not in ui and 'sampleTransactions' not in ui
-assert 'Service not yet available.' in ui and '—' in ui
+home = (root / 'app/src/main/java/com/globalmoney/uae/demo/WalletHome.kt').read_text()
+assert all(value not in ui + home for value in ('DEMO', '2,450', 'sampleTransactions'))
+assert 'Payments and transfers are not yet available.' in ui and 'Unavailable' in home
 assert 'বাংলা' in ui
 assert application.find('activity').attrib[ns + 'exported'] == 'true'
 jar = root / 'gradle/wrapper/gradle-wrapper.jar'

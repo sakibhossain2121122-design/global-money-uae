@@ -28,11 +28,10 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.UUID
 
-private val Emerald = Color(0xFF007F60)
-private val Navy = Color(0xFF102A43)
-private val Gold = Color(0xFFE8BC56)
-private val Palette = lightColorScheme(primary = Emerald, secondary = Navy, tertiary = Gold,
-    background = Color(0xFFF3F7F6), surface = Color.White, onSurface = Navy, onBackground = Navy)
+private val Red = Color(0xFFB91C36)
+private val DarkRed = Color(0xFF681326)
+private val Palette = lightColorScheme(primary = Red, secondary = DarkRed,
+    background = Color(0xFFFFF8F8), surface = Color.White, onSurface = Color(0xFF28191B), onBackground = Color(0xFF28191B))
 
 class MainActivity : ComponentActivity() {
     private val api = AccountApi()
@@ -82,7 +81,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var addPayload by remember { mutableStateOf<String?>(null) }
     var requestRows by remember { mutableStateOf(JSONArray()) }
     var receiptRequestId by remember { mutableStateOf("") }
-    var walletBalance by remember { mutableStateOf<String?>(null) }
+    var walletAmounts by remember { mutableStateOf(WalletAmounts(null, null)) }
+    var rate by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     fun call(work: () -> String, done: (String) -> Unit = {}) {
@@ -100,6 +100,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                     is AccountFailure.Session ->
                         t("Session expired. Please sign in again.", "সেশনের মেয়াদ শেষ। আবার লগইন করুন।")
 
+                    is AccountFailure.InvalidCredentials ->
+                        t("Email or password is incorrect.", "ইমেইল অথবা পাসওয়ার্ড সঠিক নয়।")
+
                     is AccountFailure.Unavailable ->
                         t("Account service temporarily unavailable.", "অ্যাকাউন্ট সেবা সাময়িক অনুপলব্ধ।")
 
@@ -108,6 +111,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
 
                     is AccountFailure.Rejected -> when (error.status) {
                         400 -> t("Check your registration details and password.", "নিবন্ধনের তথ্য ও পাসওয়ার্ড পরীক্ষা করুন।")
+                        401 -> t("Registration was not authorized by the account service. Please contact support.", "অ্যাকাউন্ট সেবা নিবন্ধনের অনুমতি দেয়নি। সহায়তার জন্য যোগাযোগ করুন।")
                         409 -> t("Account request could not be accepted.", "অ্যাকাউন্টের অনুরোধ গ্রহণ করা যায়নি।")
                         429 -> t("Too many attempts. Try again later.", "অনেকবার চেষ্টা হয়েছে। পরে আবার চেষ্টা করুন।")
                         else -> t("Request rejected. Please check your details.", "অনুরোধ গ্রহণ করা হয়নি। তথ্য পরীক্ষা করুন।")
@@ -159,26 +163,27 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
         }
     }
     fun loadWallet() {
-        walletBalance = null
+        walletAmounts = WalletAmounts(null, null)
+        rate = null
         call({ api.request("wallet") }) { response ->
-            val wallet = JSONObject(response)
-            walletBalance = wallet.optString(if (wallet.has("availableBalance")) "availableBalance" else "balance").takeIf { it.isNotBlank() && it != "null" }
+            walletAmounts = WalletAmounts.parse(response)
+            call({ api.request("rates") }) { rate = customerRate(it) }
         }
     }
     LaunchedEffect(signedIn) {
-        if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletBalance = null; receiptRequestId = "" }
+        if (!signedIn) { addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray(); walletAmounts = WalletAmounts(null, null); rate = null; receiptRequestId = "" }
         else loadWallet()
     }
     MaterialTheme(colorScheme = Palette) {
         Scaffold { insets ->
             Column(Modifier.fillMaxSize().padding(insets)) {
-                Row(Modifier.fillMaxWidth().background(Navy).padding(16.dp)) {
+                Row(Modifier.fillMaxWidth().background(DarkRed).padding(16.dp)) {
                     Text("GLOBAL MONEY UAE", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { bn = !bn }) { Text(if (bn) "English" else "বাংলা", color = Gold) }
+                    TextButton(onClick = { bn = !bn }) { Text(if (bn) "English" else "বাংলা", color = Color.White) }
                 }
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     Text(t("Your connection to home", "দেশের সাথে আপনার সংযোগ"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text(t("Service not yet available.", "সেবাটি এখনও চালু হয়নি।"), color = Emerald)
+                    Text(t("Payments and transfers are not yet available.", "পেমেন্ট ও অর্থ স্থানান্তর এখনও চালু হয়নি।"), color = Red)
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
@@ -211,29 +216,36 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                         }
                         when(page) {
                             "Home" -> {
-                                Card(colors = CardDefaults.cardColors(containerColor = Emerald), modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(24.dp)) {
-                                        Text(t("Available balance • AED", "ব্যালেন্স • AED"), color = Color.White)
-                                        Text(walletBalance ?: "—", style = MaterialTheme.typography.displayMedium, color = Color.White)
-                                        Text(t("Last retrieved balance", "সর্বশেষ প্রাপ্ত ব্যালেন্স"), color = Color.White)
+                                WalletHome(walletAmounts, rate, bn, busy, onRefresh = { loadWallet() }) { action ->
+                                    when (action) {
+                                        HomeAction.ADD_MONEY -> call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
+                                        HomeAction.SEND_MONEY -> {
+                                            paymentMethods = emptyList(); methodsLoaded = false
+                                            call({ api.paymentMethods() }) { paymentMethods = PaymentMethods.parse(it); methodsLoaded = true; page = "SendMoney" }
+                                        }
+                                        HomeAction.REQUESTS -> call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
+                                        HomeAction.HISTORY -> call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" }
+                                        HomeAction.PROFILE -> call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" }
+                                        HomeAction.SUPPORT -> call({ api.request("support") }) { rows = JSONArray(it); page = "Support" }
+                                        HomeAction.PAYMENT_METHODS -> loadPaymentMethods()
+                                        HomeAction.BENEFICIARIES -> call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }
                                     }
                                 }
-                                TextButton(enabled = !busy, onClick = { loadWallet() }) { Text(t("Refresh balance", "ব্যালেন্স রিফ্রেশ করুন")) }
-                                Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
-                                listOf("BOTIM MONEY" to "BOTIM MONEY", "Send money" to "অর্থ পাঠান").forEach { (en,bengali) ->
-                                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(t(en,bengali)) }
-                                }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
-                                }) { Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ")) }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
-                                }) { Text(t("My Add Money Requests", "আমার অনুরোধসমূহ")) }
-                                Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Beneficiaries", "প্রাপক")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("support") }) { rows = JSONArray(it); page = "Support" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Support", "সহায়তা")) }
                                 Text(t("Identity verification is not available. Do not submit identity documents.", "পরিচয় যাচাই চালু হয়নি। পরিচয়পত্র জমা দেবেন না।"))
+                            }
+                            "SendMoney" -> {
+                                Text(t("Send Money", "অর্থ পাঠান"), style = MaterialTheme.typography.titleLarge)
+                                Text(t("Payouts and transfers are not available.", "পেআউট ও অর্থ স্থানান্তর উপলব্ধ নয়।"))
+                                Text(t("Supported recipient formats (not payout availability)", "প্রাপকের সমর্থিত ধরন (পেআউট উপলব্ধতার নির্দেশ নয়)"))
+                                Text("bKash · Nagad · Rocket · Upay · Bank")
+                                Text(t("Configured Bangladesh payment methods", "বাংলাদেশের কনফিগার করা পেমেন্ট পদ্ধতি"))
+                                val bangladeshMethods = paymentMethods.filter { it.country == "BD" && it.currency == "BDT" }
+                                if (bangladeshMethods.isEmpty()) Text(t("No configured methods returned.", "কোনো কনফিগার করা পদ্ধতি পাওয়া যায়নি।"))
+                                bangladeshMethods.forEach { method -> Text(method.name + " · " + t("Unavailable", "অনুপলব্ধ")) }
+                                OutlinedButton(enabled = false, onClick = {}) { Text(t("Send money unavailable", "অর্থ পাঠানো অনুপলব্ধ")) }
+                                OutlinedButton(enabled = !busy, onClick = {
+                                    call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }
+                                }) { Text(t("Manage recipients", "প্রাপক পরিচালনা")) }
                             }
                             "PaymentMethods" -> {
                                 Text(t("Payment Methods", "পেমেন্ট পদ্ধতি"), style = MaterialTheme.typography.titleLarge)
@@ -277,7 +289,11 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 TextButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" } }) { Text("My Add Money Requests") }
                             }
                             "AddMoneyHistory" -> {
-                                Text("My Add Money Requests", style = MaterialTheme.typography.titleLarge)
+                                Text(t("My Requests", "আমার অনুরোধ"), style = MaterialTheme.typography.titleLarge)
+                                TextButton(enabled = !busy, onClick = {
+                                    call({ api.request("send-money-requests") }) { rows = JSONArray(it); page = "SendMoneyHistory" }
+                                }) { Text(t("View Send Money requests", "অর্থ পাঠানোর অনুরোধ দেখুন")) }
+                                Text("My Add Money Requests", style = MaterialTheme.typography.titleMedium)
                                 Text("Review status only. No balance adjustment or payment processing.")
                                 OutlinedButton(enabled = !busy, onClick = { call({ api.request("add-money-requests") }) { requestRows = JSONArray(it) } }) { Text("Refresh statuses") }
                                 if (requestRows.length() == 0) Text("No requests.")
@@ -292,6 +308,25 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                                 receiptPicker.launch(arrayOf("image/jpeg", "image/png", "application/pdf"))
                                             }) { Text(t("Upload receipt (max 5 MB)", "রসিদ জমা দিন (সর্বোচ্চ ৫ এমবি)")) }
                                         }
+                                    } }
+                                }
+                            }
+                            "SendMoneyHistory" -> {
+                                Text(t("Send Money requests", "অর্থ পাঠানোর অনুরোধ"), style = MaterialTheme.typography.titleLarge)
+                                Text(t("Review only. Payouts are unavailable.", "শুধু পর্যালোচনা। পেআউট উপলব্ধ নয়।"))
+                                OutlinedButton(enabled = !busy, onClick = {
+                                    call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
+                                }) { Text(t("View Add Money requests", "অর্থ যোগ করার অনুরোধ দেখুন")) }
+                                OutlinedButton(enabled = !busy, onClick = {
+                                    call({ api.request("send-money-requests") }) { rows = JSONArray(it) }
+                                }) { Text(t("Refresh", "আবার লোড করুন")) }
+                                if (rows.length() == 0) Text(t("No requests.", "কোনো অনুরোধ নেই।"))
+                                for (i in 0 until rows.length()) {
+                                    val row = rows.getJSONObject(i)
+                                    Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp)) {
+                                        Text(row.getString("id"))
+                                        Text("AED " + row.getString("amount_aed") + " · " + row.getString("status"))
+                                        Text(t("Reservation", "সংরক্ষণ") + ": " + row.getString("hold_status"))
                                     } }
                                 }
                             }
@@ -328,7 +363,10 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             "History" -> {
                                 Text(t("Transactions", "লেনদেন"), style = MaterialTheme.typography.titleLarge)
                                 if(rows.length()==0) Text(t("No transactions.", "কোনো লেনদেন নেই।"))
-                                for(i in 0 until rows.length()) Text(rows.getJSONObject(i).optString("id") + " • " + t("Under review / unavailable", "পর্যালোচনাধীন / অনুপলব্ধ"))
+                                for(i in 0 until rows.length()) {
+                                    val row = rows.getJSONObject(i)
+                                    Text(row.getString("id") + " • " + row.getString("status"))
+                                }
                             }
                             "Support" -> {
                                 Text(t("Contact support", "সহায়তা নিন"), style = MaterialTheme.typography.titleLarge)

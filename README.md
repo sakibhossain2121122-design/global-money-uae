@@ -6,7 +6,7 @@ Financial services are disabled. No provider integration, partnership, regulator
 
 ## Source layout
 
-- `android/`: emerald, navy, white and gold customer app; English/Bengali switch; registration, login, logout, profile, beneficiaries and support tickets connected to the API.
+- `android/`: red-and-white customer wallet app; English/Bengali switch; registration, login, logout, profile, beneficiaries and support tickets connected to the API.
 - `backend/`: validated APIs, scrypt password hashing, opaque revocable eight-hour sessions, authorization, bounded requests, rate limits, audit logging, migrations and tests.
 - `admin/`: authenticated administration for user suspension/reactivation, support statuses, internal rates, Add Money review, Send Money reservations, recipient reviews and reconciliation reports, UAE payment accounts and Bangladesh payout bank directories. These reviews do not confirm payment or recipient ownership. Payment, wallet-credit and transfer processing remain disabled.
 - `docs/deployment.md`: secure setup, roles, service hosting and operational boundaries.
@@ -70,6 +70,8 @@ cd android
 ```
 
 `API_BASE_URL` must be an HTTPS origin without a path or trailing slash. The API lives below `/v1`. Without this property the app still builds, but account calls fail closed with a connection notice. No fake login or success is shown. The backend and HTTPS domain must exist for connected flows to work.
+
+The home screen reads available and reserved balances from the authenticated wallet API. Customer rates currently remain unavailable, admin-configured rates are internal only, and the API does not provide fees or customer-visible payout-bank configuration. Recipient formats do not indicate payout availability. Add Money requests and receipt uploads are for review only; wallet credits and real payouts remain disabled.
 
 APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
 

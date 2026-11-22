@@ -12,6 +12,7 @@ internal sealed class AccountFailure(message: String) : Exception(message) {
     class NotConfigured : AccountFailure("Account service is not configured.")
     class Network : AccountFailure("Cannot connect to the account service.")
     class Session : AccountFailure("Your session has expired. Please sign in again.")
+    class InvalidCredentials : AccountFailure("Email or password is incorrect.")
     class Rejected(val status: Int) : AccountFailure("Account request was rejected ($status).")
     class Unavailable : AccountFailure("Account service is temporarily unavailable.")
     class InvalidReceipt : AccountFailure("Choose a JPG, PNG or PDF receipt of at most 5 MB.")
@@ -73,8 +74,14 @@ if (!baseUrl.startsWith("https://")) {
                 connection.setFixedLengthStreamingMode(data.size)
                 connection.outputStream.use { it.write(data) }
             }
-val status = connection.responseCode
-if (status == 401) {
+            val status = connection.responseCode
+            if (status == 401 && path == "auth/login") {
+                throw AccountFailure.InvalidCredentials()
+            }
+            if (status == 401 && path == "auth/register") {
+                throw AccountFailure.Rejected(status)
+            }
+            if (status == 401) {
                 token = null
                 throw AccountFailure.Session()
             }
