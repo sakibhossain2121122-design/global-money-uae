@@ -66,6 +66,10 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var bank by remember { mutableStateOf("") }
     var provider by rememberSaveable { mutableStateOf("bKash") }
     var subject by remember { mutableStateOf("") }
+var uaeMobile by remember { mutableStateOf("") }
+var confirmPassword by remember { mutableStateOf("") }
+var identityMethod by remember { mutableStateOf("emirates_id") }
+
     var message by remember { mutableStateOf("") }
     var rows by remember { mutableStateOf(JSONArray()) }
     var paymentMethods by remember { mutableStateOf<List<PaymentMethod>>(emptyList()) }
@@ -137,16 +141,102 @@ result.mapCatching { done(it) }.onFailure { error ->
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
                         Text(t(if (register) "Create account" else "Sign in", if (register) "অ্যাকাউন্ট তৈরি করুন" else "লগইন করুন"), style = MaterialTheme.typography.titleLarge)
-                        if (register) Field(name, { name = it }, t("Full name", "পুরো নাম"))
+                      if (register) {
+    OutlinedTextField(
+        value = uaeMobile,
+        onValueChange = { uaeMobile = it.filter(Char::isDigit).take(9) },
+        label = { Text("UAE Mobile (+971)") },
+        prefix = { Text("+971 ") },
+        keyboardOptions = KeyboardOptions(
+            keyboardType = KeyboardType.Phone
+        ),
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true
+    )
+                      }
+if (register) {
+    Field(
+        name,
+        { name = it },
+        t("Full name", "পুরো নাম")
+    )
+}
                         OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
-                        if (password.isNotEmpty() && password.length < 12) {
-                            Text(t("Enter at least 12 characters to continue.", "এগোতে কমপক্ষে ১২ অক্ষরের পাসওয়ার্ড লিখুন।"), color = MaterialTheme.colorScheme.error)
+                        OutlinedTextField(
+    value = password,
+    onValueChange = { password = it.take(if (register) 12 else 128) },
+    label = {
+    Text(if (register) "Password (12 characters)" else "Password")
+},
+    visualTransformation = PasswordVisualTransformation(),
+    singleLine = true,
+    modifier = Modifier.fillMaxWidth()
+)
+                        if (register && password.isNotEmpty() && password.length != 12) {
+                            
+Text(
+    t(
+        "Password must be exactly 12 characters.",
+"পাসওয়ার্ড ঠিক ১২ অক্ষরের হতে হবে"
+    ),
+    color = MaterialTheme.colorScheme.error
+)
+
                         }
-                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || name.isNotBlank()), onClick = {
-                            val payload = JSONObject().put("email", email).put("password", password).put("name", name)
+if (register) {
+    OutlinedTextField(
+        value = confirmPassword,
+        onValueChange = { confirmPassword = it.take(12) },
+        label = { Text("Confirm Password") },
+        visualTransformation = PasswordVisualTransformation(),
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
+                        
+if (register) {
+    Text("Identity document type (KYC pending)")
+
+    Row {
+        RadioButton(
+            selected = identityMethod == "emirates_id",
+            onClick = { identityMethod = "emirates_id" }
+        )
+        Text("Emirates ID")
+
+        RadioButton(
+            selected = identityMethod == "passport",
+            onClick = { identityMethod = "passport" }
+        )
+        Text("Passport")
+    }
+
+    Text("Verification pending admin review")
+}
+
+                        Button(
+    enabled = !busy &&
+        email.isNotBlank() &&
+        (if (register) password.length == 12 else password.length in 8..128) &&
+        (!register || (
+            name.isNotBlank() &&
+            uaeMobile.length == 9 &&
+            password == confirmPassword
+        )),
+    onClick = {
+                            
+val payload = JSONObject()
+    .put("email", email)
+    .put("password", password)
+    .put("name", name)
+
+if (register) {
+    payload.put("uae_mobile", "+971$uaeMobile")
+    payload.put("identity_method", identityMethod)
+}
+        
                             val creating = register
-                            password = ""
                             call({ api.request(if (creating) "auth/register" else "auth/login", "POST", payload) }) { response ->
                                 if (creating) { register = false; notice = t("Please sign in to your account.", "আপনার অ্যাকাউন্টে লগইন করুন।") }
                                 else { api.token = JSONObject(response).getString("token"); signedIn = true; email = ""; name = ""; page = "Home" }
