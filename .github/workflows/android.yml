@@ -45,10 +45,10 @@ jobs:
       - name: Build APK and run tests
         env:
           
-          API_BASE_URL: ${{ vars.STAGING_API_BASE_URL }}
+          API_BASE_URL: https://global-money-uae-staging-api.onrender.com
           
         run: |
-          test "$API_BASE_URL" = "https://global-money-uae-staging.onrender.com"
+          test "$API_BASE_URL" = "https://global-money-uae-staging-api.onrender.com"
           chmod +x gradlew
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug "-PAPI_BASE_URL=${API_BASE_URL}"  
   
