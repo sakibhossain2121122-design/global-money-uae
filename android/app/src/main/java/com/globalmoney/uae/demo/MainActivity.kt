@@ -65,6 +65,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var page by rememberSaveable { mutableStateOf("Home") }
     var register by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
+    var signInIdentifier by remember { mutableStateOf("") }
+    var registrationPhone by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
@@ -113,7 +116,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                         t("Account service temporarily unavailable.", "অ্যাকাউন্ট সেবা সাময়িক অনুপলব্ধ।")
 
                     is AccountFailure.Rejected -> when (error.status) {
-                        400 -> t("Check your registration details and password.", "নিবন্ধনের তথ্য ও পাসওয়ার্ড পরীক্ষা করুন।")
+                        400 -> t("Check your account details and password.", "অ্যাকাউন্টের তথ্য ও পাসওয়ার্ড পরীক্ষা করুন।")
+                        401 -> t("Sign-in details were not accepted. Check your email or mobile number and password.", "লগইনের তথ্য গ্রহণ করা হয়নি। ইমেইল বা মোবাইল নম্বর ও পাসওয়ার্ড মিলিয়ে দেখুন।")
                         409 -> t("Account request could not be accepted.", "অ্যাকাউন্টের অনুরোধ গ্রহণ করা যায়নি।")
                         429 -> t("Too many attempts. Try again later.", "অনেকবার চেষ্টা হয়েছে। পরে আবার চেষ্টা করুন।")
                         else -> t("Request rejected. Please check your details.", "অনুরোধ গ্রহণ করা হয়নি। তথ্য পরীক্ষা করুন।")
@@ -201,22 +205,96 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
                         Text(t(if (register) "Create account" else "Sign in", if (register) "অ্যাকাউন্ট তৈরি করুন" else "লগইন করুন"), style = MaterialTheme.typography.titleLarge)
-                        if (register) Field(name, { name = it }, t("Full name", "পুরো নাম"))
-                        OutlinedTextField(email, { email = it.take(254) }, label = { Text(t("Email", "ইমেইল")) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email), modifier = Modifier.fillMaxWidth())
+                        val validPhone = Regex("""\+[1-9][0-9]{6,14}""").matches(registrationPhone.trim())
+                        if (register) {
+                            Field(name, { name = it.take(120) }, t("Full name", "পুরো নাম"))
+                            OutlinedTextField(
+                                registrationPhone, { registrationPhone = it.take(16) },
+                                label = { Text(t("Mobile number", "মোবাইল নম্বর")) },
+                                supportingText = { Text(t("Include the country code (e.g. +971 or +880).", "দেশের কোডসহ লিখুন (যেমন +971 বা +880)।")) },
+                                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            OutlinedTextField(
+                                email, { email = it.take(254) }, label = { Text(t("Email (optional)", "ইমেইল (ঐচ্ছিক)")) },
+                                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else {
+                            OutlinedTextField(
+                                signInIdentifier, { signInIdentifier = it.take(254) },
+                                label = { Text(t("Email or mobile number", "ইমেইল বা মোবাইল নম্বর")) },
+                                singleLine = true, modifier = Modifier.fillMaxWidth()
+                            )
+                        }
                         OutlinedTextField(password, { password = it.take(128) }, label = { Text(t("Password (12–128 characters)", "পাসওয়ার্ড (১২–১২৮ অক্ষর)")) }, visualTransformation = PasswordVisualTransformation(), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password), modifier = Modifier.fillMaxWidth())
                         if (password.isNotEmpty() && password.length < 12) {
                             Text(t("Enter at least 12 characters to continue.", "এগোতে কমপক্ষে ১২ অক্ষরের পাসওয়ার্ড লিখুন।"), color = MaterialTheme.colorScheme.error)
                         }
-                        Button(enabled = !busy && email.isNotBlank() && password.length >= 12 && (!register || name.isNotBlank()), onClick = {
-                            val payload = JSONObject().put("email", email).put("password", password).put("name", name)
-                            val creating = register
-                            password = ""
-                            call({ api.request(if (creating) "auth/register" else "auth/login", "POST", payload) }) { response ->
-                                if (creating) { register = false; notice = t("Please sign in to your account.", "আপনার অ্যাকাউন্টে লগইন করুন।") }
-                                else { api.token = JSONObject(response).getString("token"); signedIn = true; email = ""; name = ""; page = "Home" }
+                        if (register) {
+                            val mismatch = confirmPassword.isNotEmpty() && confirmPassword != password
+                            OutlinedTextField(
+                                confirmPassword, { confirmPassword = it.take(128) },
+                                label = { Text(t("Confirm password", "পাসওয়ার্ড আবার লিখুন")) },
+                                isError = mismatch, visualTransformation = PasswordVisualTransformation(),
+                                singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            if (mismatch) Text(t("Passwords do not match.", "দুই পাসওয়ার্ড মেলেনি।"), color = MaterialTheme.colorScheme.error)
+                            Text(t("Identity documents", "পরিচয়পত্র জমা"), style = MaterialTheme.typography.titleMedium)
+                            Text(t("Document submission is currently unavailable. You can register without uploading files.", "পরিচয়পত্র জমা এখন বন্ধ। ছবি ছাড়াই নিবন্ধন করতে পারবেন।"))
+                            listOf(
+                                t("Upload passport", "পাসপোর্ট আপলোড"),
+                                t("Upload UAE ID card", "UAE ID কার্ড আপলোড"),
+                                t("Upload selfie or image", "সেলফি বা ছবি আপলোড")
+                            ).forEach { label ->
+                                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(label) }
                             }
-                        }, modifier = Modifier.fillMaxWidth()) { Text(t(if (register) "Register" else "Sign in", if (register) "নিবন্ধন" else "লগইন")) }
-                        TextButton(enabled = !busy, onClick = { register = !register; password = "" }) { Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন")) }
+                        }
+                        val entryReady = if (register) name.isNotBlank() && validPhone && confirmPassword == password
+                            else signInIdentifier.isNotBlank()
+                        Button(enabled = !busy && entryReady && password.length >= 12, onClick = {
+                            val creating = register
+                            val submittedPhone = registrationPhone.trim()
+                            val identifier = signInIdentifier.trim()
+                            val payload = JSONObject().put("password", password)
+                            val path = if (creating) {
+                                payload.put("name", name.trim()).put("phone_number", submittedPhone)
+                                    .put("confirm_password", confirmPassword)
+                                if (email.isNotBlank()) payload.put("email", email.trim())
+                                "auth/register-mobile"
+                            } else {
+                                payload.put(if (identifier.startsWith("+")) "phone_number" else "email", identifier)
+                                "auth/login"
+                            }
+                            password = ""
+                            confirmPassword = ""
+                            call({ api.request(path, "POST", payload) }) { response ->
+                                if (creating) {
+                                    register = false
+                                    signInIdentifier = submittedPhone
+                                    registrationPhone = ""
+                                    email = ""
+                                    name = ""
+                                    notice = t("Please sign in to your account.", "আপনার অ্যাকাউন্টে লগইন করুন।")
+                                } else {
+                                    api.token = JSONObject(response).getString("token")
+                                    signedIn = true
+                                    signInIdentifier = ""
+                                    page = "Home"
+                                }
+                            }
+                        }, modifier = Modifier.fillMaxWidth()) {
+                            Text(t(if (register) "Register" else "Sign in", if (register) "নিবন্ধন" else "লগইন"))
+                        }
+                        TextButton(enabled = !busy, onClick = {
+                            register = !register
+                            password = ""
+                            confirmPassword = ""
+                            notice = ""
+                        }) {
+                            Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন"))
+                        }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             TextButton(enabled = !busy, onClick = { page = "Home"; rows = JSONArray(); loadWallet() }) { Text(t("Home", "হোম")) }

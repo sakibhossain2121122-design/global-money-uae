@@ -30,7 +30,7 @@ internal class AccountApi(
         return request("payment-methods")
     }
     fun request(path: String, method: String = "GET", data: JSONObject? = null): String {
-if (!baseUrl.startsWith("https://")) {
+        if (!baseUrl.startsWith("https://")) {
             throw AccountFailure.NotConfigured()
         }
 
@@ -45,14 +45,15 @@ if (!baseUrl.startsWith("https://")) {
             connection.instanceFollowRedirects = false
             connection.requestMethod = method
             connection.setRequestProperty("Accept", "application/json")
-            token?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
+            val accountEntry = path in setOf("auth/login", "auth/register", "auth/register-mobile")
+            if (!accountEntry) token?.let { connection.setRequestProperty("Authorization", "Bearer $it") }
             if (data != null) {
                 connection.doOutput = true
                 connection.setRequestProperty("Content-Type", "application/json")
                 connection.outputStream.use { it.write(data.toString().toByteArray(Charsets.UTF_8)) }
             }
-val status = connection.responseCode
-if (status == 401) {
+            val status = connection.responseCode
+            if (status == 401 && !accountEntry) {
                 token = null
                 throw AccountFailure.Session()
             }
@@ -76,8 +77,6 @@ if (status == 401) {
             throw AccountFailure.Network()
         } finally {
             connection.disconnect()
-
+        }
     }
-}
-
 }

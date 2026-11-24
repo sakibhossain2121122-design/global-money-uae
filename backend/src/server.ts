@@ -3,7 +3,7 @@ import pg from 'pg';
 import {control} from './control.ts';
 import {submission,review,fields} from './add-money.ts';
 import { validateAccount } from './admin-control.ts';
-import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
+import { ApiError, text, uuid, email, phoneNumber, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
 pool.on('error', () => console.error(JSON.stringify({event:'database.connection.failed'})));
@@ -31,17 +31,27 @@ const server = createServer(async (req,res) => {
   await c.query('BEGIN');
   const audit = async(action:string,target:string|null=null) => {await c.query('INSERT INTO audit_logs(actor_id,action,target) VALUES($1,$2,$3)',[actor,action,target]);if(action.startsWith('admin.'))await c.query('INSERT INTO admin_control_events(admin_id,action,target_id) VALUES($1,$2,$3)',[actor,action,target??'']);};
   let result: unknown; let status=200;
-  if (method==='POST' && ['/v1/auth/register','/v1/auth/login'].includes(path)) {
+  if (method==='POST' && ['/v1/auth/register','/v1/auth/register-mobile','/v1/auth/login'].includes(path)) {
    if (!authLimiter.allow(req.socket.remoteAddress ?? 'unknown')) throw new ApiError(429,'Too many attempts');
-   const b=await body(req); const mail=email(b.email); const pass=password(b.password);
-   if(path.endsWith('register')) {
+   const b=await body(req); const pass=password(b.password);
+   if(path!=='/v1/auth/login') {
+    const name=text(b.name);
+    const mobileRegistration=path==='/v1/auth/register-mobile';
+    const mail=mobileRegistration && b.email===undefined ? null : email(b.email);
+    const phone=mobileRegistration ? phoneNumber(b.phone_number) : null;
+    if(mobileRegistration && b.confirm_password!==pass) throw new ApiError(400,'Passwords do not match');
     const hash=await hashPassword(pass);
-    const inserted=await c.query('INSERT INTO customers(email,password_hash,name) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING RETURNING id',[mail,hash,text(b.name)]);
+    const inserted=mobileRegistration
+      ? await c.query('INSERT INTO customers(email,password_hash,name,phone_number) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id',[mail,hash,name,phone])
+      : await c.query('INSERT INTO customers(email,password_hash,name) VALUES($1,$2,$3) ON CONFLICT(email) DO NOTHING RETURNING id',[mail,hash,name]);
     if(inserted.rowCount) {actor=inserted.rows[0].id;await audit('account.register');}
-    // Same response whether account exists; registration does not create a session.
+    // Same response whether the sign-in identifier is new or already in use.
     status=202;result={message:'If eligible, your account is ready. Please sign in.'};
    } else {
-    const found=await c.query('SELECT * FROM customers WHERE email=$1',[mail]); const user=found.rows[0];
+    const found=b.phone_number===undefined
+      ? await c.query('SELECT * FROM customers WHERE email=$1',[email(b.email)])
+      : await c.query('SELECT * FROM customers WHERE phone_number=$1',[phoneNumber(b.phone_number)]);
+    const user=found.rows[0];
     const valid=await verifyPassword(pass,user?.password_hash ?? dummyHash);
     if (!valid || !user || user.status!=='active') throw new ApiError(401,'Invalid credentials');
     actor=user.id; const bearer=token();
@@ -190,7 +200,7 @@ else if (
 }
  
 else if(method==='GET' && path==='/v1/admin/users')
- result=(await c.query('SELECT id,email,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
+ result=(await c.query('SELECT id,email,phone_number,name,status,role FROM customers ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/support') result=(await c.query('SELECT id,customer_id,subject,message,status FROM support_tickets ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/transactions') result=(await c.query('SELECT id,customer_id,status,created_at FROM transactions ORDER BY created_at DESC LIMIT 100')).rows;
    else if(method==='GET' && path==='/v1/admin/rates') result=(await c.query('SELECT pair,value,updated_at FROM rates')).rows;

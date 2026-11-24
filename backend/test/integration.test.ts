@@ -69,5 +69,17 @@ try {
   await t.test('suspension revokes sessions',async()=>{const id=(await request('me','GET',undefined,bob)).body.id;await request('admin/users','PATCH',{id,status:'suspended'},admin);assert.equal((await request('me','GET',undefined,bob)).status,401);});
   await t.test('expired session rejected',async()=>{await pool.query("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE customer_id=(SELECT id FROM customers WHERE email='admin@example.com')");assert.equal((await request('me','GET',undefined,admin)).status,401);});
   await t.test('logout revokes token',async()=>{assert.equal((await request('auth/logout','POST',{},alice)).status,200);assert.equal((await request('me','GET',undefined,alice)).status,401);});
+  await t.test('mobile registration checks password confirmation and signs in by phone without email',async()=>{
+   const phone_number='+12025550123';
+   const details={name:'Phone Customer',phone_number,password:pass,role:'admin'};
+   assert.equal((await request('auth/register-mobile','POST',{...details,confirm_password:'Different password 123!'})).status,400);
+   assert.equal((await request('auth/register-mobile','POST',{...details,confirm_password:pass})).status,202);
+   const login=await request('auth/login','POST',{phone_number,password:pass});
+   assert.equal(login.status,200);
+   const profile=(await request('me','GET',undefined,login.body.token)).body;
+   assert.equal(profile.name,'Phone Customer');
+   assert.equal(profile.email,null);
+   assert.equal(profile.role,'customer');
+  });
  });
 } finally {child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');await pool.end();}

@@ -30,6 +30,20 @@ class PaymentMethodsApiTest {
         val api = AccountApi("https://api.example") { fail("Unauthenticated request"); throw AssertionError() }
         try { api.paymentMethods(); fail() } catch (_: IllegalStateException) { }
     }
+    @Test fun loginRejectionDoesNotReportAnExpiredSession() {
+        val connection = Connection(401, "{}")
+        val api = AccountApi("https://api.example") { connection }
+        api.token = "existing-session"
+        try {
+            api.request("auth/login", "POST")
+            fail("Expected the login request to be rejected")
+        } catch (error: AccountFailure.Rejected) {
+            assertEquals(401, error.status)
+        }
+        assertNull(connection.getRequestProperty("Authorization"))
+        assertEquals("existing-session", api.token)
+        assertTrue(connection.disconnected)
+    }
     @Test fun expiryClearsTokenWhileOtherErrorsPreserveSessionForRetry() {
         for (status in listOf(401, 403, 429, 500, 503)) {
             val connection = Connection(status, "not an array")

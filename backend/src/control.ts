@@ -16,6 +16,11 @@ export async function control(c:PoolClient,path:string,method:string,actor:strin
   const b=await body();fields(b,['id','role']);const id=uuid(b.id);
   if(id===actor)throw new ApiError(400,'Cannot change your own role');
   if(!['customer','admin','reviewer','support'].includes(String(b.role)))throw new ApiError(400,'Invalid role');
+  if(b.role!=='customer') {
+   const account=(await c.query('SELECT email FROM customers WHERE id=$1',[id])).rows[0];
+   if(!account)throw new ApiError(404,'User not found');
+   if(!account.email)throw new ApiError(400,'An email address is required for staff access');
+  }
   if(!(await c.query('UPDATE customers SET role=$2 WHERE id=$1 RETURNING id',[id,b.role])).rowCount)throw new ApiError(404,'User not found');
   await c.query('DELETE FROM sessions WHERE customer_id=$1',[id]);await audit('admin.user.role.'+b.role,id);return out({id});
  }

@@ -13,7 +13,7 @@ async function request(path:string,method='GET',body?:unknown,token?:string){con
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'7');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'8');
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3109'},stdio:'ignore'});
  for(let i=0;i<50;i++){try{if((await fetch('http://127.0.0.1:3109/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
  const tokens:Record<string,string>={};

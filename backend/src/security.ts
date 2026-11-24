@@ -23,6 +23,11 @@ export function email(value: unknown): string {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw new ApiError(400, 'Invalid email');
   return result;
 }
+export function phoneNumber(value: unknown): string {
+  const result = text(value, 8, 16);
+  if (!/^\+[1-9][0-9]{6,14}$/.test(result)) throw new ApiError(400, 'Include the country code in the mobile number');
+  return result;
+}
 export function password(value: unknown): string {
   if (typeof value !== 'string' || value.length < 12 || value.length > 128) throw new ApiError(400, 'Password must contain 12–128 characters');
   return value;
