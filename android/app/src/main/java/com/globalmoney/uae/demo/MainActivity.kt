@@ -5,6 +5,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
@@ -12,6 +13,7 @@ import android.util.Base64
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.KeyboardOptions
@@ -29,11 +31,11 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 import java.util.UUID
 
-private val Emerald = Color(0xFFB7192D)
-private val Navy = Color(0xFF31171D)
-private val Gold = Color(0xFFFFE8EC)
+private val Emerald = Color(0xFF006453)
+private val Navy = Color(0xFF102C37)
+private val Gold = Color(0xFFFFDD9A)
 private val Palette = lightColorScheme(primary = Emerald, secondary = Navy, tertiary = Gold,
-    background = Color(0xFFFFF8F9), surface = Color.White, onSurface = Navy, onBackground = Navy)
+    background = Color(0xFFF3F8F6), surface = Color.White, onSurface = Navy, onBackground = Navy)
 
 class MainActivity : ComponentActivity() {
     private val api = AccountApi()
@@ -88,6 +90,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var busy by remember { mutableStateOf(false) }
     var availableBalance by remember { mutableStateOf("—") }
     var heldBalance by remember { mutableStateOf("—") }
+    var exchangeRate by remember { mutableStateOf("—") }
     var historyFilter by remember { mutableStateOf("all") }
     var configuredFees by remember { mutableStateOf<Map<String,String>>(emptyMap()) }
     var sendAmount by remember { mutableStateOf("") }
@@ -191,25 +194,62 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     }
     fun loadWallet() {
         availableBalance = "—"; heldBalance = "—"
-        call({ api.request("wallet") }) { response ->
-            val wallet = JSONObject(response)
+        exchangeRate = "—"
+        call({
+            val wallet = JSONObject(api.request("wallet"))
+            val rate = JSONObject(api.request("rates"))
+            JSONObject().put("wallet", wallet).put("rate", rate).toString()
+        }) { response ->
+            val data = JSONObject(response)
+            val rate = data.getJSONObject("rate")
+            if (rate.optBoolean("available") && !rate.isNull("value")) {
+                exchangeRate = rate.getString("value")
+            }
+            val wallet = data.getJSONObject("wallet")
             availableBalance = if (wallet.isNull("available")) "—" else wallet.getString("available")
             heldBalance = if (wallet.isNull("held")) "—" else wallet.getString("held")
         }
     }
     LaunchedEffect(signedIn) {
-        if (!signedIn) { availableBalance = "—"; heldBalance = "—"; historyFilter = "all"; configuredFees = emptyMap(); sendPayload = null; sendKey = UUID.randomUUID().toString(); sendAmount = ""; sendBeneficiary = ""; receiptRequest = ""; addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray() } else loadWallet()
+        if (!signedIn) { availableBalance = "—"; heldBalance = "—"; exchangeRate = "—"; historyFilter = "all"; configuredFees = emptyMap(); sendPayload = null; sendKey = UUID.randomUUID().toString(); sendAmount = ""; sendBeneficiary = ""; receiptRequest = ""; addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray() } else loadWallet()
+    }
+    fun openHome() {
+        page = "Home"
+        rows = JSONArray()
+        loadWallet()
+    }
+    val scroll = rememberScrollState()
+    LaunchedEffect(page, signedIn) { scroll.scrollTo(0) }
+    BackHandler(enabled = signedIn && page != "Home") {
+        if (!busy) openHome()
     }
     MaterialTheme(colorScheme = Palette) {
-        Scaffold { insets ->
+        Scaffold(bottomBar = {
+            if (signedIn) {
+                Surface(shadowElevation = 4.dp) {
+                    Row(
+                        Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        TextButton(enabled = !busy, onClick = { openHome() }) {
+                            Text(t("Home", "হোম"), fontWeight = if (page == "Home") FontWeight.Bold else FontWeight.Normal)
+                        }
+                        TextButton(enabled = !busy, onClick = { notice = ""; page = "Activity" }) {
+                            Text(t("Activity", "ইতিহাস"), fontWeight = if (page == "Activity") FontWeight.Bold else FontWeight.Normal)
+                        }
+                        TextButton(enabled = !busy, onClick = { notice = ""; page = "More" }) {
+                            Text(t("More", "আরও"), fontWeight = if (page == "More") FontWeight.Bold else FontWeight.Normal)
+                        }
+                    }
+                }
+            }
+        }) { insets ->
             Column(Modifier.fillMaxSize().padding(insets)) {
                 Row(Modifier.fillMaxWidth().background(Emerald).padding(16.dp)) {
                     Text("GLOBAL MONEY UAE", color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                     TextButton(onClick = { bn = !bn }) { Text(if (bn) "English" else "বাংলা", color = Gold) }
                 }
-                Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                    Text(t("Your connection to home", "দেশের সাথে আপনার সংযোগ"), style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text(t("Service not yet available.", "সেবাটি এখনও চালু হয়নি।"), color = Emerald)
+                Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(scroll).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                     if (notice.isNotEmpty()) Text(notice, color = MaterialTheme.colorScheme.error)
                     if (!signedIn) {
@@ -297,57 +337,79 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             Text(t(if (register) "Already have an account? Sign in" else "Create account", if (register) "লগইন করুন" else "অ্যাকাউন্ট তৈরি করুন"))
                         }
                     } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(enabled = !busy, onClick = { page = "Home"; rows = JSONArray(); loadWallet() }) { Text(t("Home", "হোম")) }
-                            TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
-                            TextButton(enabled = !busy, onClick = {
-                                call({ api.request("auth/logout", "POST", JSONObject()) }) {
-                                    api.token = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
-                                }
-                            }) { Text(t("Logout", "লগআউট")) }
-                        }
                         when(page) {
                             "Home" -> {
-                                Card(colors = CardDefaults.cardColors(containerColor = Emerald), modifier = Modifier.fillMaxWidth()) {
-                                    Column(Modifier.padding(24.dp)) {
-                                        Text(t("Available balance • AED", "ব্যালেন্স • AED"), color = Color.White)
-                                        Text(availableBalance, style = MaterialTheme.typography.displayMedium, color = Color.White)
-                                        Text(t("Reserved • AED ", "সংরক্ষিত • AED ") + heldBalance, color = Color.White)
-                                        Text(t("From your authenticated ledger", "আপনার সুরক্ষিত লেজার থেকে"), color = Color.White)
+                                Text(t("UAE → Bangladesh", "সংযুক্ত আরব আমিরাত → বাংলাদেশ"), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                                Card(
+                                    colors = CardDefaults.cardColors(containerColor = Navy, contentColor = Color.White),
+                                    shape = RoundedCornerShape(24.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(t("Available balance", "ব্যবহারযোগ্য ব্যালেন্স"))
+                                        Text(if (availableBalance == "—") "—" else "AED $availableBalance", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
+                                        if (heldBalance != "—") {
+                                            Text(t("Reserved", "সংরক্ষিত") + " · AED " + heldBalance)
+                                        }
+                                        HorizontalDivider(color = Color.White.copy(alpha = 0.25f))
+                                        Text(t("AED → BDT exchange rate", "AED → BDT বিনিময় হার"), color = Gold)
+                                        Text(if (exchangeRate == "—") "—" else "1 AED = $exchangeRate BDT")
                                     }
                                 }
+                                Button(
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                                    onClick = {
+                                        call({ JSONObject().put("recipients",JSONArray(api.request("beneficiaries"))).put("options",JSONObject(api.request("request-options"))).toString() }) {
+                                            val data = JSONObject(it); rows = data.getJSONArray("recipients")
+                                            val fees = data.getJSONObject("options").getJSONArray("fees")
+                                            configuredFees = (0 until fees.length()).associate { i -> val fee = fees.getJSONObject(i); fee.getString("provider") to fee.getString("flat_aed") }
+                                            page = "SendMoneyRequest"
+                                        }
+                                    }
+                                ) { Text(t("Send Money Request", "টাকা পাঠানোর অনুরোধ")) }
+                                OutlinedButton(
+                                    enabled = !busy,
+                                    modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
+                                    onClick = {
+                                        call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
+                                    }
+                                ) { Text(t("Add Money Request", "টাকা যোগ করার অনুরোধ")) }
+                                Text(t("Requests are reviewed in the app. Real payments are unavailable.", "অনুরোধ অ্যাপে পর্যালোচনা করা হয়। প্রকৃত পেমেন্ট চালু নেই।"), style = MaterialTheme.typography.bodySmall)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = {
+                                        call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }
+                                    }) { Text(t("Recipients", "প্রাপক")) }
+                                    OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = {
+                                        call({ api.request("support") }) { rows = JSONArray(it); page = "Support" }
+                                    }) { Text(t("Support", "সহায়তা")) }
+                                }
+                            }
+                            "Activity" -> {
+                                Text(t("Activity", "ইতিহাস"), style = MaterialTheme.typography.headlineSmall)
+                                Button(enabled = !busy, onClick = { call({ api.request("request-history") }) { rows = JSONArray(it); historyFilter = "all"; page = "RequestHistory" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Request history", "অনুরোধের ইতিহাস")) }
+                                Button(enabled = !busy, onClick = { call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
+                                OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                                    call({ api.request("send-money-requests") }) { rows = JSONArray(it); page = "SendMoneyHistory" }
+                                }) { Text(t("My Send Money Requests", "টাকা পাঠানোর অনুরোধসমূহ")) }
+                                OutlinedButton(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
+                                    call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
+                                }) { Text(t("My Add Money Requests", "টাকা যোগ করার অনুরোধসমূহ")) }
+                            }
+                            "More" -> {
+                                Text(t("More", "আরও"), style = MaterialTheme.typography.headlineSmall)
+                                TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
+                                Button(enabled = !busy, onClick = { call({ api.request("payment-accounts") }) { rows = JSONArray(it); page = "PaymentAccounts" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment account directory", "পেমেন্ট অ্যাকাউন্ট তালিকা")) }
+                                Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
                                 OutlinedButton(enabled = !busy, onClick = { openIdentitySamples() }) {
                                     Text(t("Identity samples", "পরিচয়ের নমুনা"))
                                 }
                                 OutlinedButton(enabled = !busy, onClick = { loadWallet() }) { Text(t("Refresh wallet", "ওয়ালেট রিফ্রেশ")) }
-                                Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
-                                listOf("BOTIM MONEY" to "BOTIM MONEY", "Send money" to "অর্থ পাঠান").forEach { (en,bengali) ->
-                                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(t(en,bengali)) }
-                                }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ JSONObject().put("recipients",JSONArray(api.request("beneficiaries"))).put("options",JSONObject(api.request("request-options"))).toString() }) {
-                                        val data = JSONObject(it); rows = data.getJSONArray("recipients")
-                                        val fees = data.getJSONObject("options").getJSONArray("fees")
-                                        configuredFees = (0 until fees.length()).associate { i -> val fee = fees.getJSONObject(i); fee.getString("provider") to fee.getString("flat_aed") }
-                                        page = "SendMoneyRequest"
+                                TextButton(enabled = !busy, onClick = {
+                                    call({ api.request("auth/logout", "POST", JSONObject()) }) {
+                                        api.token = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
                                     }
-                                }) { Text("Send Money request only") }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ api.request("send-money-requests") }) { rows = JSONArray(it); page = "SendMoneyHistory" }
-                                }) { Text("My Send Money requests") }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
-                                }) { Text(t("Add Money Request", "অর্থ যোগ করার অনুরোধ")) }
-                                Button(enabled = !busy, modifier = Modifier.fillMaxWidth(), onClick = {
-                                    call({ api.request("add-money-requests") }) { requestRows = JSONArray(it); page = "AddMoneyHistory" }
-                                }) { Text(t("My Add Money Requests", "আমার অনুরোধসমূহ")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("payment-accounts") }) { rows = JSONArray(it); page = "PaymentAccounts" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment account directory", "পেমেন্ট অ্যাকাউন্ট তালিকা")) }
-                                Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Beneficiaries", "প্রাপক")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("request-history") }) { rows = JSONArray(it); historyFilter = "all"; page = "RequestHistory" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Request history", "অনুরোধের ইতিহাস")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("support") }) { rows = JSONArray(it); page = "Support" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Support", "সহায়তা")) }
-                                Text(t("Identity verification is not available. Do not submit identity documents.", "পরিচয় যাচাই চালু হয়নি। পরিচয়পত্র জমা দেবেন না।"))
+                                }) { Text(t("Logout", "লগআউট")) }
                             }
                             "SendMoneyRequest" -> {
                                 Text("Send Money request only", style = MaterialTheme.typography.titleLarge)
