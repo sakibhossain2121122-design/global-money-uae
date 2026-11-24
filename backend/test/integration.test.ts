@@ -8,7 +8,7 @@ const url=process.env.TEST_DATABASE_URL;
 if(!url || !new URL(url).pathname.endsWith('_test')) throw new Error('TEST_DATABASE_URL must point to a disposable database ending in _test');
 const pool=new pg.Pool({connectionString:url});
 const port=3107;
-const child=spawn(process.execPath,['src/server.ts'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATABASE_URL:url,PORT:String(port)},stdio:['ignore','ignore','pipe']});
+const child=spawn(process.execPath,['src/server.ts'],{cwd:new URL('..',import.meta.url),env:{...process.env,DATABASE_URL:url,PORT:String(port),STAGING_IDENTITY_SAMPLE_REVIEW:'true',STAGING_AUTH_LIMITS:'true'},stdio:['ignore','ignore','pipe']});
 child.stderr.on('data',()=>{}); // Server rejection events contain no request secrets.
 const endpoint='http://127.0.0.1:'+port+'/v1/';
 async function request(path:string,method='GET',body?:unknown,token?:string){
@@ -66,8 +66,38 @@ try {
    } finally {await c.query('ROLLBACK');c.release();}
   });
   await t.test('audit records persisted',async()=>{const actions=(await pool.query('SELECT action FROM audit_logs')).rows.map(r=>r.action);assert(actions.includes('account.register'));assert(actions.includes('profile.update'));assert(actions.includes('admin.rate.configure'));});
+  await t.test('only built-in samples can be submitted and approved once by an administrator',async()=>{
+   const route='staging-identity-samples';
+   const payload={
+    identity_sample:'uae-id-sample.txt',identity_content:'GLOBAL MONEY UAE STAGING SAMPLE: UAE ID',
+    selfie_sample:'selfie-sample.txt',selfie_content:'GLOBAL MONEY UAE STAGING SAMPLE: SELFIE'
+   };
+   assert.equal((await request(route,'POST',{...payload,image:'data:image/png;base64,AAAA'},alice)).status,400);
+   assert.equal((await request(route,'POST',{...payload,identity_content:'Personal document content'},alice)).status,400);
+   const submitted=await request(route,'POST',payload,alice);
+   assert.equal(submitted.status,201);
+   const id=submitted.body.submission.id;
+   assert.equal((await request(route,'POST',payload,alice)).status,409);
+   assert.equal((await request(route,'GET',undefined,bob)).body.submission,null);
+   const decision={id,status:'approved'};
+   assert.equal((await request('admin/'+route,'PATCH',decision,alice)).status,403);
+   assert.equal((await request('admin/'+route,'GET',undefined,admin)).body[0].id,id);
+   assert.equal((await request('admin/'+route,'PATCH',decision,admin)).status,200);
+   assert.equal((await request('admin/'+route,'PATCH',{id,status:'rejected'},admin)).status,409);
+   assert.equal((await request(route,'GET',undefined,alice)).body.submission.status,'approved');
+   assert.equal((await request('kyc','GET',undefined,alice)).body.documentsAccepted,false);
+   assert.equal((await pool.query('SELECT kyc_status FROM customers WHERE name=$1',['Alice Updated'])).rows[0].kyc_status,'not_started');
+  });
   await t.test('suspension revokes sessions',async()=>{const id=(await request('me','GET',undefined,bob)).body.id;await request('admin/users','PATCH',{id,status:'suspended'},admin);assert.equal((await request('me','GET',undefined,bob)).status,401);});
   await t.test('expired session rejected',async()=>{await pool.query("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE customer_id=(SELECT id FROM customers WHERE email='admin@example.com')");assert.equal((await request('me','GET',undefined,admin)).status,401);});
+  await t.test('staging authentication throttles one identifier without blocking another',async()=>{
+   const blocked={phone_number:'+12025550155',password:pass};
+   for(let attempt=0;attempt<6;attempt++) assert.equal((await request('auth/login','POST',blocked)).status,401);
+   assert.equal((await request('auth/login','POST',blocked)).status,429);
+   const other={phone_number:'+12025550156',password:pass};
+   assert.equal((await request('auth/register-mobile','POST',{...other,confirm_password:pass,name:'Rate Limit Test'})).status,202);
+   assert.equal((await request('auth/login','POST',other)).status,200);
+  });
   await t.test('logout revokes token',async()=>{assert.equal((await request('auth/logout','POST',{},alice)).status,200);assert.equal((await request('me','GET',undefined,alice)).status,401);});
   await t.test('mobile registration checks password confirmation and signs in by phone without email',async()=>{
    const phone_number='+12025550123';

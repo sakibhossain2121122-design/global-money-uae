@@ -72,3 +72,15 @@ A journal has a unique idempotency key; entries use signed integer minor units t
 Run expired-session cleanup regularly using a privileged maintenance job (`DELETE FROM sessions WHERE expires_at < now()`), with database backups/retention governed by an approved policy. Audit records contain action, actor and target identifiers, not request bodies. Restrict audit reading to authorized operators. Monitor aggregate rejections without collecting secrets.
 
 Registration currently has no email verification, password reset, account email change or MFA flow. Provide an approved recovery process and verified-email onboarding before inviting a broad customer audience. Admin user management is suspension/reactivation, not arbitrary role assignment. User and ticket lists show the latest 100 records without pagination. No emulator/device UI acceptance test is claimed. Review Bengali wording, accessibility and small-screen behavior on devices before release.
+
+## Staging identity sample review
+
+On the isolated Render staging API, set `STAGING_IDENTITY_SAMPLE_REVIEW=true` and deploy the matching backend commit. The migration runner applies the sample review table. Keep the flag off on production. For a restricted runtime role other than `gm_app`, apply the same column grants from migration 010.
+
+Install the matching Android staging APK, register and sign in as a test customer, then choose **Identity samples** and submit the built-in passport or UAE ID sample with the included selfie sample. In the matching Admin preview, open **Identity sample review** and approve or reject the submission. In Android, refresh the status. Use separate customer and administrator accounts.
+
+The API accepts only the exact built-in text samples and persists their identifiers and review metadata. It does not store the sample bytes or change the customer's actual KYC status. Real document intake remains disabled.
+
+### Staging registration rate limits
+
+On the isolated staging API, `STAGING_AUTH_LIMITS=true` allows 60 account requests per network peer and six per submitted phone number or email per 15 minutes. The peer limit remains in effect when the hosting proxy groups users behind one address. Leave this unset in production to keep the default peer limit of ten per 15 minutes.
