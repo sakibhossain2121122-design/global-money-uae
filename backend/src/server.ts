@@ -8,7 +8,11 @@ import { ApiError, text, uuid, email, phoneNumber, password, hashPassword, verif
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
 pool.on('error', () => console.error(JSON.stringify({event:'database.connection.failed'})));
-const limiter = new Limiter(), authLimiter = new Limiter(10, 15*60000);
+const limiter = new Limiter();
+const authWindow = 15 * 60000;
+const stagingAuthLimits = process.env.STAGING_AUTH_LIMITS === 'true';
+const authLimiter = new Limiter(stagingAuthLimits ? 60 : 10, authWindow);
+const identifierAuthLimiter = new Limiter(6, authWindow);
 const dummyHash = await hashPassword(token());
 async function body(req: IncomingMessage, limit=16384): Promise<Record<string,unknown>> {
  if (req.headers['content-type']?.split(';')[0].trim() !== 'application/json') throw new ApiError(415,'JSON required');
@@ -35,11 +39,15 @@ const server = createServer(async (req,res) => {
   if (method==='POST' && ['/v1/auth/register','/v1/auth/register-mobile','/v1/auth/login'].includes(path)) {
    if (!authLimiter.allow(req.socket.remoteAddress ?? 'unknown')) throw new ApiError(429,'Too many attempts');
    const b=await body(req); const pass=password(b.password);
+   const mobileRegistration=path==='/v1/auth/register-mobile';
+   const mobileLogin=path==='/v1/auth/login' && b.phone_number!==undefined;
+   const phone=mobileRegistration || mobileLogin ? phoneNumber(b.phone_number) : null;
+   const mail=mobileLogin || (mobileRegistration && b.email===undefined) ? null : email(b.email);
+   if(stagingAuthLimits && !identifierAuthLimiter.allow(digest(phone ?? mail!))) {
+    throw new ApiError(429,'Too many attempts');
+   }
    if(path!=='/v1/auth/login') {
     const name=text(b.name);
-    const mobileRegistration=path==='/v1/auth/register-mobile';
-    const mail=mobileRegistration && b.email===undefined ? null : email(b.email);
-    const phone=mobileRegistration ? phoneNumber(b.phone_number) : null;
     if(mobileRegistration && b.confirm_password!==pass) throw new ApiError(400,'Passwords do not match');
     const hash=await hashPassword(pass);
     const inserted=mobileRegistration
@@ -49,9 +57,9 @@ const server = createServer(async (req,res) => {
     // Same response whether the sign-in identifier is new or already in use.
     status=202;result={message:'If eligible, your account is ready. Please sign in.'};
    } else {
-    const found=b.phone_number===undefined
-      ? await c.query('SELECT * FROM customers WHERE email=$1',[email(b.email)])
-      : await c.query('SELECT * FROM customers WHERE phone_number=$1',[phoneNumber(b.phone_number)]);
+    const found=mobileLogin
+      ? await c.query('SELECT * FROM customers WHERE phone_number=$1',[phone])
+      : await c.query('SELECT * FROM customers WHERE email=$1',[mail]);
     const user=found.rows[0];
     const valid=await verifyPassword(pass,user?.password_hash ?? dummyHash);
     if (!valid || !user || user.status!=='active') throw new ApiError(401,'Invalid credentials');

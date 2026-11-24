@@ -80,3 +80,7 @@ On the isolated Render staging API, set `STAGING_IDENTITY_SAMPLE_REVIEW=true` an
 Install the matching Android staging APK, register and sign in as a test customer, then choose **Identity samples** and submit the built-in passport or UAE ID sample with the included selfie sample. In the matching Admin preview, open **Identity sample review** and approve or reject the submission. In Android, refresh the status. Use separate customer and administrator accounts.
 
 The API accepts only the exact built-in text samples and persists their identifiers and review metadata. It does not store the sample bytes or change the customer's actual KYC status. Real document intake remains disabled.
+
+### Staging registration rate limits
+
+On the isolated staging API, `STAGING_AUTH_LIMITS=true` allows 60 account requests per network peer and six per submitted phone number or email per 15 minutes. The peer limit remains in effect when the hosting proxy groups users behind one address. Leave this unset in production to keep the default peer limit of ten per 15 minutes.
