@@ -81,7 +81,11 @@ const server = createServer(async (req,res) => {
    else if(method==='GET' && path==='/v1/me') result=user;
    else if(method==='PATCH' && path==='/v1/me') {const b=await body(req);await c.query('UPDATE customers SET name=$1 WHERE id=$2',[text(b.name),actor]);await audit('profile.update');result={ok:true};}
    else if(method==='GET' && path==='/v1/wallet') result={balance:null,currency:'AED',postingEnabled:false};
-   else if(method==='GET' && path==='/v1/rates') result={pair:'AED/BDT',value:null,available:false};
+   else if(method==='GET' && path==='/v1/rates') {
+    const staged = process.env.STAGING_SHOW_CONFIGURED_RATE === 'true';
+    const configured = staged ? (await c.query("SELECT value::text FROM rates WHERE pair='AED/BDT' AND value>0")).rows[0] : undefined;
+    result={pair:'AED/BDT',value:configured?.value??null,available:Boolean(configured)};
+   }
    else if(method==='GET' && path==='/v1/kyc') result={status:'unavailable',documentsAccepted:false};
    else if(method==='GET' && path==='/v1/transactions') result=(await c.query('SELECT id,status,created_at FROM transactions WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
    else if(method==='GET' && path==='/v1/beneficiaries') result=(await c.query('SELECT id,name,provider,account,bank FROM beneficiaries WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
@@ -90,7 +94,7 @@ const server = createServer(async (req,res) => {
    else if(method==='GET' && path==='/v1/support') result=(await c.query('SELECT id,subject,status,created_at FROM support_tickets WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;
    else if(method==='POST' && path==='/v1/support') {const b=await body(req);result=(await c.query('INSERT INTO support_tickets(customer_id,subject,message) VALUES($1,$2,$3) RETURNING id',[actor,text(b.subject),text(b.message,1,2000)])).rows[0];await audit('support.create');status=201;}
    else if(method==='GET' && path==='/v1/add-money-request-methods') {
-    result=(await c.query("SELECT id,name,country,currency FROM payment_methods WHERE currency='AED' AND request_enabled ORDER BY display_order,id")).rows;
+    result=(await c.query("SELECT id,name,country,currency,logo_url FROM payment_methods WHERE currency='AED' AND request_enabled ORDER BY display_order,id")).rows;
    } else if(method==='POST' && path==='/v1/add-money-requests') {
     const b=submission(await body(req));
     // Serialize retries by customer and key. Collisions only add waiting, never authorize access.
@@ -224,7 +228,7 @@ else if(method==='GET' && path==='/v1/admin/users')
     const id=uuid(b.id);await c.query('UPDATE support_tickets SET status=$1 WHERE id=$2',[b.status,id]);await audit('admin.support.status',id);result={ok:true};
    } else if(method==='PUT' && path==='/v1/admin/rates') {
     const b=await body(req);const value=text(b.value,1,20);if(!/^\d{1,10}(\.\d{1,6})?$/.test(value)||Number(value)<=0)throw new ApiError(400,'Invalid rate');
-    await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
+    await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:process.env.STAGING_SHOW_CONFIGURED_RATE === 'true'};
    } else if (method === 'GET' && path === '/v1/payment-methods') {
   result = (await c.query(
     'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods ORDER BY display_order, id'

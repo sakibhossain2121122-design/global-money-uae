@@ -84,3 +84,9 @@ The API accepts only the exact built-in text samples and persists their identifi
 ### Staging registration rate limits
 
 On the isolated staging API, `STAGING_AUTH_LIMITS=true` allows 60 account requests per network peer and six per submitted phone number or email per 15 minutes. The peer limit remains in effect when the hosting proxy groups users behind one address. Leave this unset in production to keep the default peer limit of ten per 15 minutes.
+
+### Staging remittance estimate
+
+Set `STAGING_SHOW_CONFIGURED_RATE=true` on the isolated staging API. Save a positive AED/BDT value under **Rates** in the matching admin panel. The authenticated customer rate endpoint exposes this configured rate only when the flag is set. Android calculates a two-decimal BDT estimate from the requested AED amount before fees. Estimates do not affect ledger balances or settle requests.
+
+Use **Payout banks** to create and enable the banks offered in the Android recipient picker. Use **Payment methods** to configure the name, HTTPS logo URL, and staging request availability for AED methods, then select the method under **Payment accounts** to manage the account details. Leave the flag unset in production.

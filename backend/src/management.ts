@@ -33,11 +33,17 @@ export async function management(c:PoolClient,path:string,method:string,actor:st
   const fee=b.flat_aed==='0'||b.flat_aed==='0.00'?'0.00':amount(b.flat_aed);if(Number(fee)>10000)throw new ApiError(400,'Fee exceeds limit');
   await c.query('INSERT INTO fee_rules(provider,flat_aed,enabled) VALUES($1,$2,$3) ON CONFLICT(provider) DO UPDATE SET flat_aed=$2,enabled=$3,updated_at=now()',[id,fee,b.enabled]);
  } else {
-  fields(b,['id','name','country','currency','display_order','enabled','request_enabled']);id=text(b.id,2,40);
+  fields(b,['id','name','country','currency','display_order','enabled','request_enabled','logo_url']);id=text(b.id,2,40);
   if(!/^[a-z0-9_]+$/.test(id)||b.currency!=='AED'||typeof b.enabled!=='boolean'||!Number.isInteger(b.display_order)||Number(b.display_order)<0||Number(b.display_order)>10000)throw new ApiError(400,'Invalid method');
   if(b.request_enabled!==undefined&&typeof b.request_enabled!=='boolean')throw new ApiError(400,'Invalid request setting');
   const country=text(b.country,2,2);if(!/^[A-Z]{2}$/.test(country))throw new ApiError(400,'Invalid country');
-  await c.query('INSERT INTO payment_methods(id,name,country,currency,display_order,enabled,request_enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=$2,country=$3,currency=$4,display_order=$5,enabled=$6,request_enabled=$7,updated_at=now()',[id,text(b.name),country,b.currency,b.display_order,b.enabled,b.request_enabled??true]);
+  const suppliedLogo = b.logo_url === undefined ? undefined : (b.logo_url === '' ? null : text(b.logo_url, 9, 500));
+  if (suppliedLogo) {
+   let url: URL;
+   try { url = new URL(suppliedLogo); } catch { throw new ApiError(400,'Invalid logo URL'); }
+   if (url.protocol !== 'https:' || url.username || url.password) throw new ApiError(400,'Logo must use an HTTPS URL');
+  }
+  await c.query('INSERT INTO payment_methods(id,name,country,currency,display_order,enabled,request_enabled,logo_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET name=$2,country=$3,currency=$4,display_order=$5,enabled=$6,request_enabled=$7,logo_url=CASE WHEN $9 THEN $8 ELSE payment_methods.logo_url END,updated_at=now()',[id,text(b.name),country,b.currency,b.display_order,b.enabled,b.request_enabled??true,suppliedLogo??null,suppliedLogo!==undefined]);
  }
  await audit('admin.'+type+'.configure',id);return {data:{id,executionEnabled:false}};
 }
