@@ -14,8 +14,8 @@ try {
  await pool.query("DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='gm_app') THEN CREATE ROLE gm_app NOLOGIN; END IF; END $$");
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
- child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3110'},stdio:'ignore'});
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'10');
+ child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3110',STAGING_SHOW_CONFIGURED_RATE:'true'},stdio:'ignore'});
  for(let i=0;i<50;i++){try{if((await fetch('http://127.0.0.1:3110/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
  const tokens:Record<string,string>={};
  for(const name of ['alice','bob','admin','reviewer','support']){const credentials={email:name+'@example.com',password:'A secure password 123!',name};await request('auth/register','POST',credentials);if(['admin','reviewer','support'].includes(name))await pool.query('UPDATE customers SET role=$1 WHERE email=$2',[name,credentials.email]);tokens[name]=(await request('auth/login','POST',credentials)).body.token;}
@@ -54,9 +54,18 @@ try {
     const r=await request('beneficiaries','POST',{name:'Isolated fixture',provider,account:provider==='Bank'?'TEST123456':'01712345678',bank:provider==='Bank'?'Test bank':null},alice);assert.equal(r.status,201);if(provider==='bKash')ben=r.body.id;
    }
    assert.equal((await request('send-money-requests','POST',{amount_aed:'30',beneficiary_id:ben,idempotency_key:randomUUID()},alice)).status,409);
-   const r=await request('send-money-requests','POST',{amount_aed:'30',expected_fee_aed:'2.00',beneficiary_id:ben,idempotency_key:randomUUID()},alice);assert.equal(r.status,201);requestId=r.body.id;
+   assert.equal((await request('admin/rates','PUT',{value:'33.123456'},admin)).status,200);
+   const rate=(await request('rates','GET',undefined,alice)).body.value;
+   assert.equal(rate,'33.123456');
+   const input={amount_aed:'30',expected_fee_aed:'2.00',beneficiary_id:ben,idempotency_key:randomUUID(),expected_rate:rate};
+   assert.equal((await request('send-money-requests','POST',{...input,expected_rate:'32.000000'},alice)).status,409);
+   const r=await request('send-money-requests','POST',input,alice);assert.equal(r.status,201);requestId=r.body.id;
+   assert.equal(r.body.estimated_bdt,'993.70');
+   assert.equal((await request('admin/rates','PUT',{value:'34'},admin)).status,200);
+   const retry=await request('send-money-requests','POST',input,alice);
+   assert.equal(retry.status,200);assert.equal(retry.body.estimated_bdt,'993.70');
    const w=(await request('wallet','GET',undefined,alice)).body;assert.equal(w.available,'68.00');assert.equal(w.held,'32.00');
-   const row=(await request('request-history','GET',undefined,alice)).body[0];assert.equal(row.fee_aed,'2.00');assert.equal(row.recipient_snapshot.provider,'bKash');assert.equal(row.settlement_verified,false);
+   const row=(await request('request-history','GET',undefined,alice)).body[0];assert.equal(row.fee_aed,'2.00');assert.equal(row.estimated_bdt,'993.70');assert.equal(row.recipient_snapshot.provider,'bKash');assert.equal(row.settlement_verified,false);
    assert.equal((await request('request-history','GET',undefined,bob)).body.length,0);
   });
   await t.test('approval/processing require reservation, never create successful payouts, rejection releases exactly once',async()=>{

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
+import {stagingRemittanceRate} from './remittance-rate.ts';
 import {control} from './control.ts';
 import {stagingIdentity} from './staging-identity.ts';
 import {submission,review,fields} from './add-money.ts';
@@ -82,9 +83,8 @@ const server = createServer(async (req,res) => {
    else if(method==='PATCH' && path==='/v1/me') {const b=await body(req);await c.query('UPDATE customers SET name=$1 WHERE id=$2',[text(b.name),actor]);await audit('profile.update');result={ok:true};}
    else if(method==='GET' && path==='/v1/wallet') result={balance:null,currency:'AED',postingEnabled:false};
    else if(method==='GET' && path==='/v1/rates') {
-    const staged = process.env.STAGING_SHOW_CONFIGURED_RATE === 'true';
-    const configured = staged ? (await c.query("SELECT value::text FROM rates WHERE pair='AED/BDT' AND value>0")).rows[0] : undefined;
-    result={pair:'AED/BDT',value:configured?.value??null,available:Boolean(configured)};
+    const value=await stagingRemittanceRate(c);
+    result={pair:'AED/BDT',value,available:value!==null};
    }
    else if(method==='GET' && path==='/v1/kyc') result={status:'unavailable',documentsAccepted:false};
    else if(method==='GET' && path==='/v1/transactions') result=(await c.query('SELECT id,status,created_at FROM transactions WHERE customer_id=$1 ORDER BY created_at DESC LIMIT 100',[actor])).rows;

@@ -15,7 +15,7 @@ export async function wallet(c:PoolClient,actor:string) {
 export async function management(c:PoolClient,path:string,method:string,actor:string,body:()=>Promise<Record<string,unknown>>,audit:(action:string,target?:string|null)=>Promise<void>) {
  if(path==='/v1/request-options'&&method==='GET')return {data:{fees:(await c.query('SELECT provider,flat_aed FROM fee_rules WHERE enabled ORDER BY provider')).rows,countries:(await c.query('SELECT code,name,enabled FROM service_countries ORDER BY code')).rows,executionEnabled:false}};
  if(path==='/v1/wallet'&&method==='GET')return {data:await wallet(c,actor)};
- if(path==='/v1/request-history'&&method==='GET')return {data:(await c.query(`SELECT id,request_type,amount_aed,fee_aed,recipient_snapshot,status,
+ if(path==='/v1/request-history'&&method==='GET')return {data:(await c.query(`SELECT id,request_type,amount_aed,fee_aed,quoted_aed_bdt_rate,estimated_bdt,recipient_snapshot,status,
  CASE status WHEN 'under_review' THEN 'processing' ELSE status END AS display_status,
  false AS settlement_verified,created_at,updated_at FROM service_requests WHERE customer_id=$1 ORDER BY created_at DESC,id LIMIT 100`,[actor])).rows};
  if(path==='/v1/admin/reservation-journals'&&method==='GET')return {data:(await c.query('SELECT * FROM reservation_journals ORDER BY created_at DESC LIMIT 100')).rows};
