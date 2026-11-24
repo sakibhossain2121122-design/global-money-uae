@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {spawn} from 'node:child_process';
+import {spawn,execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import pg from 'pg';
 import {readFile} from 'node:fs/promises';
@@ -17,7 +17,7 @@ async function request(path:string,method='GET',body?:unknown,token?:string){
 }
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
- await pool.query(await readFile(new URL('../migrations/001_foundation.sql',import.meta.url),'utf8'));
+ execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
  let ready=false;
  for(let n=0;n<50;n++){try{const r=await fetch('http://127.0.0.1:'+port+'/health');if(r.ok){ready=true;break;}}catch{}await new Promise(r=>setTimeout(r,100));}
  assert(ready,'API did not start');
@@ -69,5 +69,17 @@ try {
   await t.test('suspension revokes sessions',async()=>{const id=(await request('me','GET',undefined,bob)).body.id;await request('admin/users','PATCH',{id,status:'suspended'},admin);assert.equal((await request('me','GET',undefined,bob)).status,401);});
   await t.test('expired session rejected',async()=>{await pool.query("UPDATE sessions SET expires_at=now()-interval '1 second' WHERE customer_id=(SELECT id FROM customers WHERE email='admin@example.com')");assert.equal((await request('me','GET',undefined,admin)).status,401);});
   await t.test('logout revokes token',async()=>{assert.equal((await request('auth/logout','POST',{},alice)).status,200);assert.equal((await request('me','GET',undefined,alice)).status,401);});
+  await t.test('mobile registration checks password confirmation and signs in by phone without email',async()=>{
+   const phone_number='+12025550123';
+   const details={name:'Phone Customer',phone_number,password:pass,role:'admin'};
+   assert.equal((await request('auth/register-mobile','POST',{...details,confirm_password:'Different password 123!'})).status,400);
+   assert.equal((await request('auth/register-mobile','POST',{...details,confirm_password:pass})).status,202);
+   const login=await request('auth/login','POST',{phone_number,password:pass});
+   assert.equal(login.status,200);
+   const profile=(await request('me','GET',undefined,login.body.token)).body;
+   assert.equal(profile.name,'Phone Customer');
+   assert.equal(profile.email,null);
+   assert.equal(profile.role,'customer');
+  });
  });
 } finally {child.kill('SIGTERM');if(child.exitCode===null)await once(child,'exit');await pool.end();}
