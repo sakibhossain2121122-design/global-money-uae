@@ -74,6 +74,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var name by remember { mutableStateOf("") }
     var account by remember { mutableStateOf("") }
     var bank by remember { mutableStateOf("") }
+    var payoutBanks by remember { mutableStateOf(JSONArray()) }
     var provider by rememberSaveable { mutableStateOf("bKash") }
     var subject by remember { mutableStateOf("") }
     var message by remember { mutableStateOf("") }
@@ -138,6 +139,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                 }
                 if (page == "SendMoneyRequest" && error is AccountFailure.Rejected && error.status in listOf(400, 404, 409)) {
                     sendPayload = null; sendKey = UUID.randomUUID().toString()
+                    if (error.status == 409) notice = t("The rate, fee or recipient option may have changed. Reopen the request from Home and review it again.", "রেট, ফি বা প্রাপকের অপশন বদলে থাকতে পারে। হোম থেকে আবার অনুরোধ খুলে মিলিয়ে নিন।")
                 }
                 if (api.token == null && signedIn) {
                     signedIn = false
@@ -212,6 +214,39 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     }
     LaunchedEffect(signedIn) {
         if (!signedIn) { availableBalance = "—"; heldBalance = "—"; exchangeRate = "—"; historyFilter = "all"; configuredFees = emptyMap(); sendPayload = null; sendKey = UUID.randomUUID().toString(); sendAmount = ""; sendBeneficiary = ""; receiptRequest = ""; addPayload = null; addKey = UUID.randomUUID().toString(); addAmount = ""; addNote = ""; addMethod = ""; addMethods = JSONArray(); requestRows = JSONArray() } else loadWallet()
+    }
+    fun openRecipients() {
+        call({
+            JSONObject().put("recipients", JSONArray(api.request("beneficiaries")))
+                .put("banks", JSONArray(api.request("payout-banks"))).toString()
+        }) {
+            val data = JSONObject(it)
+            rows = data.getJSONArray("recipients")
+            payoutBanks = data.getJSONArray("banks")
+            bank = ""
+            page = "Beneficiaries"
+        }
+    }
+    fun openSendRequest(channel: String? = null) {
+        call({
+            JSONObject().put("recipients", JSONArray(api.request("beneficiaries")))
+                .put("options", JSONObject(api.request("request-options")))
+                .put("banks", JSONArray(api.request("payout-banks"))).toString()
+        }) {
+            val data = JSONObject(it)
+            rows = data.getJSONArray("recipients")
+            payoutBanks = data.getJSONArray("banks")
+            if (sendPayload == null) {
+                channel?.let { provider = it; sendBeneficiary = "" }
+                if ((0 until payoutBanks.length()).none { payoutBanks.getJSONObject(it).optString("name") == bank }) bank = ""
+            }
+            val fees = data.getJSONObject("options").getJSONArray("fees")
+            configuredFees = (0 until fees.length()).associate { i ->
+                val fee = fees.getJSONObject(i)
+                fee.getString("provider") to fee.getString("flat_aed")
+            }
+            page = "SendMoneyRequest"
+        }
     }
     fun openHome() {
         page = "Home"
@@ -359,14 +394,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 Button(
                                     enabled = !busy,
                                     modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp),
-                                    onClick = {
-                                        call({ JSONObject().put("recipients",JSONArray(api.request("beneficiaries"))).put("options",JSONObject(api.request("request-options"))).toString() }) {
-                                            val data = JSONObject(it); rows = data.getJSONArray("recipients")
-                                            val fees = data.getJSONObject("options").getJSONArray("fees")
-                                            configuredFees = (0 until fees.length()).associate { i -> val fee = fees.getJSONObject(i); fee.getString("provider") to fee.getString("flat_aed") }
-                                            page = "SendMoneyRequest"
-                                        }
-                                    }
+                                    onClick = { openSendRequest() }
                                 ) { Text(t("Send Money Request", "টাকা পাঠানোর অনুরোধ")) }
                                 OutlinedButton(
                                     enabled = !busy,
@@ -375,10 +403,31 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                         call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
                                     }
                                 ) { Text(t("Add Money Request", "টাকা যোগ করার অনুরোধ")) }
-                                Text(t("Requests are reviewed in the app. Real payments are unavailable.", "অনুরোধ অ্যাপে পর্যালোচনা করা হয়। প্রকৃত পেমেন্ট চালু নেই।"), style = MaterialTheme.typography.bodySmall)
+                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(t("UAE wallet", "ইউএই ওয়ালেট"), style = MaterialTheme.typography.labelMedium)
+                                        Text("BOTIM Money", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                        TextButton(enabled = !busy && addPayload == null, onClick = {
+                                            call({ api.request("add-money-request-methods") }) { response ->
+                                                val methods = JSONArray(response)
+                                                val botim = (0 until methods.length()).map { methods.getJSONObject(it) }
+                                                    .firstOrNull { it.optString("id") == "botim_money" }
+                                                if (botim == null) {
+                                                    notice = t("BOTIM Money requests are unavailable.", "BOTIM Money অনুরোধ এখন বন্ধ।")
+                                                } else {
+                                                    addMethods = methods
+                                                    addMethod = botim.getString("id")
+                                                    page = "AddMoneyRequest"
+                                                }
+                                            }
+                                        }) { Text(t("Request AED with BOTIM Money", "BOTIM Money দিয়ে AED যোগ করার অনুরোধ")) }
+                                    }
+                                }
+                                Text(t("Send to Bangladesh", "বাংলাদেশে পাঠান"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                PayoutTiles(enabled = !busy, bankLabel = t("Bank", "ব্যাংক")) { openSendRequest(it) }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                     OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = {
-                                        call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" }
+                                        openRecipients()
                                     }) { Text(t("Recipients", "প্রাপক")) }
                                     OutlinedButton(enabled = !busy, modifier = Modifier.weight(1f), onClick = {
                                         call({ api.request("support") }) { rows = JSONArray(it); page = "Support" }
@@ -412,17 +461,22 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 }) { Text(t("Logout", "লগআউট")) }
                             }
                             "SendMoneyRequest" -> {
-                                Text("Send Money request only", style = MaterialTheme.typography.titleLarge)
+                                Text(t("Send Money Request", "টাকা পাঠানোর অনুরোধ"), style = MaterialTheme.typography.titleLarge)
                                 Text("No payout is executed. If a funded wallet exists, amount plus configured fee is reserved until rejection or cancellation. Approval does not mean settlement.")
-                                Field(sendAmount, { if (sendPayload == null) sendAmount = it.take(10) }, "Requested AED amount")
+                                OutlinedTextField(sendAmount, { sendAmount = it.take(10) }, enabled = !busy && sendPayload == null,
+                                    label = { Text(t("Amount to send (AED)", "পাঠানোর পরিমাণ (AED)")) }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true, modifier = Modifier.fillMaxWidth())
+                                val estimate = estimateBdt(sendAmount, exchangeRate)
+                                Text(t("Estimated recipient amount", "প্রাপক আনুমানিক পাবেন") + " · " + (estimate?.let { "BDT " + it } ?: "—"))
                                 if (sendPayload == null) {
                                     Text(t("Add recipient", "প্রাপক যোগ করুন"), style = MaterialTheme.typography.titleMedium)
-                                    listOf("bKash", "Nagad", "Rocket", "Upay", "Bank").forEach { value ->
-                                        Row { RadioButton(selected = provider == value, onClick = { provider = value }); Text(value) }
+                                    PayoutTiles(enabled = !busy, bankLabel = t("Bank", "ব্যাংক"), selected = provider) {
+                                        provider = it; bank = ""; sendBeneficiary = ""
                                     }
+                                    FilterChip(selected = provider == "Upay", enabled = !busy, onClick = { provider = "Upay"; bank = ""; sendBeneficiary = "" }, label = { Text("Upay") })
                                     Field(name, { name = it }, t("Recipient name", "প্রাপকের নাম"))
                                     Field(account, { account = it.take(40) }, t("Recipient number", "প্রাপকের নম্বর"))
-                                    if (provider == "Bank") Field(bank, { bank = it }, t("Bank name", "ব্যাংকের নাম"))
+                                    if (provider == "Bank") BankPicker(payoutBanks, bank, !busy, t("Select bank", "ব্যাংক নির্বাচন করুন"), t("No banks available.", "কোনো ব্যাংক পাওয়া যায়নি।")) { bank = it }
                                     OutlinedButton(enabled = !busy && name.isNotBlank() && account.isNotBlank() && (provider != "Bank" || bank.isNotBlank()), onClick = {
                                         val payload = JSONObject().put("name",name).put("provider",provider).put("account",account).put("bank",bank)
                                         call({ val saved = JSONObject(api.request("beneficiaries","POST",payload)); JSONObject().put("recipient",saved.getString("id")).put("rows",JSONArray(api.request("beneficiaries"))).toString() }) {
@@ -444,7 +498,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 Text("Configured fee • AED " + confirmedFee + ". This amount is included in any funded wallet reservation.")
                                 Button(enabled = !busy && sendBeneficiary.isNotEmpty() && AddMoneyDraft.validAmount(sendAmount), onClick = {
                                     val payload = sendPayload ?: JSONObject().put("amount_aed",sendAmount).put("expected_fee_aed",confirmedFee).put("beneficiary_id",sendBeneficiary)
-                                        .put("idempotency_key",sendKey).toString().also { sendPayload = it }
+                                        .put("idempotency_key",sendKey).apply { if (estimate != null) put("expected_rate", exchangeRate) }
+                                        .toString().also { sendPayload = it }
                                     call({ api.request("send-money-requests","POST",JSONObject(payload)) }) {
                                         sendPayload = null; sendKey = UUID.randomUUID().toString(); sendAmount = ""; sendBeneficiary = ""
                                         page = "Home"; loadWallet(); notice = "Request submitted. No payout was executed."
@@ -457,6 +512,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 for (i in 0 until rows.length()) {
                                     val row = rows.getJSONObject(i)
                                     Text(row.optString("id") + " • AED " + row.optString("amount_aed") + " • " + row.optString("status"))
+                                    if (!row.isNull("estimated_bdt")) Text(t("Estimated recipient amount", "প্রাপকের আনুমানিক পরিমাণ") + " · BDT " + row.getString("estimated_bdt"))
                                 }
                             }
                             "PaymentAccounts" -> {
@@ -468,8 +524,11 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                     val row = rows.getJSONObject(i)
                                     Card(Modifier.fillMaxWidth()) {
                                         Column(Modifier.padding(20.dp)) {
-                                            for (key in listOf("payment_method_id", "account_holder", "account_number", "iban", "instructions")) {
-                                                if (!row.isNull(key)) Text(key + ": " + row.optString(key))
+                                            Text(row.optString("payment_method_id").replace('_', ' ').uppercase(), fontWeight = FontWeight.Bold)
+                                            Text(row.optString("account_holder"))
+                                            listOf("account_number", "iban").forEach { key ->
+                                                val number = if (row.isNull(key)) "" else row.optString(key).filter { it.isLetterOrDigit() }
+                                                if (number.length >= 4) Text("•••• " + number.takeLast(4))
                                             }
                                         }
                                     }
@@ -477,7 +536,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                             }
                             "PaymentMethods" -> {
                                 Text(t("Payment Methods", "পেমেন্ট পদ্ধতি"), style = MaterialTheme.typography.titleLarge)
-                                Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
+                                Text(t("Service not yet available.", "সেবাটি এখনও চালু হয়নি।"))
                                 if (methodsLoaded && paymentMethods.isEmpty()) Text(t("No payment methods available.", "কোনো পেমেন্ট পদ্ধতি পাওয়া যায়নি।"))
                                 if (!busy && !methodsLoaded) Text(t("Payment methods could not be loaded.", "পেমেন্ট পদ্ধতি লোড হয়নি।"))
                                 OutlinedButton(enabled = !busy, onClick = { loadPaymentMethods() }) { Text(t("Refresh", "আবার লোড করুন")) }
@@ -487,9 +546,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                             Text(method.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                             Text(t("Country", "দেশ") + ": " + method.country)
                                             Text(t("Currency", "মুদ্রা") + ": " + method.currency)
-                                            method.logoUrl?.let { logo -> Text(t("Logo URL", "লোগোর ঠিকানা") + ": " + logo, style = MaterialTheme.typography.bodySmall) }
+                                            MethodLogo(method.name, method.logoUrl)
                                             OutlinedButton(enabled = method.enabled, onClick = {}, modifier = Modifier.fillMaxWidth()) {
-                                                Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
+                                                Text(t("Service not yet available.", "সেবাটি এখনও চালু হয়নি।"))
                                             }
                                         }
                                     }
@@ -501,7 +560,12 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 OutlinedTextField(addAmount, { addAmount = it.take(10) }, enabled = addPayload == null && !busy, label = { Text("Amount (AED)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.fillMaxWidth())
                                 for (i in 0 until addMethods.length()) {
                                     val method = addMethods.getJSONObject(i)
-                                    Row { RadioButton(enabled = addPayload == null && !busy, selected = addMethod == method.getString("id"), onClick = { addMethod = method.getString("id") }); Text(method.getString("name"), modifier = Modifier.padding(top = 12.dp)) }
+                                    val id = method.getString("id")
+                                    FilterChip(
+                                        enabled = addPayload == null && !busy, selected = addMethod == id,
+                                        onClick = { addMethod = id }, label = { Text(method.getString("name")) },
+                                        leadingIcon = { MethodLogo(method.getString("name"), method.optString("logo_url", "")) }
+                                    )
                                 }
                                 if (addMethods.length() == 0) Text("No request methods available.")
                                 OutlinedTextField(addNote, { addNote = it.take(500) }, enabled = addPayload == null && !busy, label = { Text("Optional note (no sensitive information)") }, modifier = Modifier.fillMaxWidth())
@@ -545,6 +609,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                         Text(row.optString("request_type").replace('_',' '), fontWeight = FontWeight.Bold)
                                         Text("AED " + row.optString("amount_aed") + " • " + row.optString("display_status"))
                                         Text("Configured fee • AED " + row.optString("fee_aed"))
+                                        if (!row.isNull("estimated_bdt")) Text(t("Estimated recipient amount", "প্রাপকের আনুমানিক পরিমাণ") + " · BDT " + row.getString("estimated_bdt"))
                                         Text(row.optString("created_at"))
                                     } }
                                 }
@@ -601,7 +666,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 }
                                 Field(name, { name = it }, t("Recipient name", "প্রাপকের নাম"))
                                 Field(account, { account = it.take(40) }, t("Account number", "অ্যাকাউন্ট নম্বর"))
-                                if(provider == "Bank") Field(bank, { bank = it }, t("Bank name", "ব্যাংকের নাম"))
+                                if (provider == "Bank") BankPicker(payoutBanks, bank, !busy, t("Select bank", "ব্যাংক নির্বাচন করুন"), t("No banks available.", "কোনো ব্যাংক পাওয়া যায়নি।")) { bank = it }
                                 Button(enabled = !busy && name.isNotBlank() && account.length >= 6 && (provider != "Bank" || bank.isNotBlank()), onClick = {
                                     val payload = JSONObject().put("provider",provider).put("name",name).put("account",account).put("bank",bank)
                                     call({ api.request("beneficiaries","POST",payload); api.request("beneficiaries") }) { rows=JSONArray(it); name=""; account=""; bank="" }

@@ -15,7 +15,7 @@ export async function wallet(c:PoolClient,actor:string) {
 export async function management(c:PoolClient,path:string,method:string,actor:string,body:()=>Promise<Record<string,unknown>>,audit:(action:string,target?:string|null)=>Promise<void>) {
  if(path==='/v1/request-options'&&method==='GET')return {data:{fees:(await c.query('SELECT provider,flat_aed FROM fee_rules WHERE enabled ORDER BY provider')).rows,countries:(await c.query('SELECT code,name,enabled FROM service_countries ORDER BY code')).rows,executionEnabled:false}};
  if(path==='/v1/wallet'&&method==='GET')return {data:await wallet(c,actor)};
- if(path==='/v1/request-history'&&method==='GET')return {data:(await c.query(`SELECT id,request_type,amount_aed,fee_aed,recipient_snapshot,status,
+ if(path==='/v1/request-history'&&method==='GET')return {data:(await c.query(`SELECT id,request_type,amount_aed,fee_aed,quoted_aed_bdt_rate,estimated_bdt,recipient_snapshot,status,
  CASE status WHEN 'under_review' THEN 'processing' ELSE status END AS display_status,
  false AS settlement_verified,created_at,updated_at FROM service_requests WHERE customer_id=$1 ORDER BY created_at DESC,id LIMIT 100`,[actor])).rows};
  if(path==='/v1/admin/reservation-journals'&&method==='GET')return {data:(await c.query('SELECT * FROM reservation_journals ORDER BY created_at DESC LIMIT 100')).rows};
@@ -33,11 +33,17 @@ export async function management(c:PoolClient,path:string,method:string,actor:st
   const fee=b.flat_aed==='0'||b.flat_aed==='0.00'?'0.00':amount(b.flat_aed);if(Number(fee)>10000)throw new ApiError(400,'Fee exceeds limit');
   await c.query('INSERT INTO fee_rules(provider,flat_aed,enabled) VALUES($1,$2,$3) ON CONFLICT(provider) DO UPDATE SET flat_aed=$2,enabled=$3,updated_at=now()',[id,fee,b.enabled]);
  } else {
-  fields(b,['id','name','country','currency','display_order','enabled','request_enabled']);id=text(b.id,2,40);
+  fields(b,['id','name','country','currency','display_order','enabled','request_enabled','logo_url']);id=text(b.id,2,40);
   if(!/^[a-z0-9_]+$/.test(id)||b.currency!=='AED'||typeof b.enabled!=='boolean'||!Number.isInteger(b.display_order)||Number(b.display_order)<0||Number(b.display_order)>10000)throw new ApiError(400,'Invalid method');
   if(b.request_enabled!==undefined&&typeof b.request_enabled!=='boolean')throw new ApiError(400,'Invalid request setting');
   const country=text(b.country,2,2);if(!/^[A-Z]{2}$/.test(country))throw new ApiError(400,'Invalid country');
-  await c.query('INSERT INTO payment_methods(id,name,country,currency,display_order,enabled,request_enabled) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(id) DO UPDATE SET name=$2,country=$3,currency=$4,display_order=$5,enabled=$6,request_enabled=$7,updated_at=now()',[id,text(b.name),country,b.currency,b.display_order,b.enabled,b.request_enabled??true]);
+  const suppliedLogo = b.logo_url === undefined ? undefined : (b.logo_url === '' ? null : text(b.logo_url, 9, 500));
+  if (suppliedLogo) {
+   let url: URL;
+   try { url = new URL(suppliedLogo); } catch { throw new ApiError(400,'Invalid logo URL'); }
+   if (url.protocol !== 'https:' || url.username || url.password) throw new ApiError(400,'Logo must use an HTTPS URL');
+  }
+  await c.query('INSERT INTO payment_methods(id,name,country,currency,display_order,enabled,request_enabled,logo_url) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET name=$2,country=$3,currency=$4,display_order=$5,enabled=$6,request_enabled=$7,logo_url=CASE WHEN $9 THEN $8 ELSE payment_methods.logo_url END,updated_at=now()',[id,text(b.name),country,b.currency,b.display_order,b.enabled,b.request_enabled??true,suppliedLogo??null,suppliedLogo!==undefined]);
  }
  await audit('admin.'+type+'.configure',id);return {data:{id,executionEnabled:false}};
 }
