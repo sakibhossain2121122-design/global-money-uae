@@ -78,7 +78,125 @@ const server = createServer(async (req,res) => {
    } else if(method==='PUT' && path==='/v1/admin/rates') {
     const b=await body(req);const value=text(b.value,1,20);if(!/^\d{1,10}(\.\d{1,6})?$/.test(value)||Number(value)<=0)throw new ApiError(400,'Invalid rate');
     await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
-   } else if (method === 'GET' && path === '/v1/payment-methods') {
+   
+} else if (method === 'POST' && path === '/v1/deposit-requests') {
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  if (user.role !== 'customer')
+    throw new ApiError(403,'Customer access required');
+
+  const b = await body(req);
+  const amount = Number(b.amountAed);
+  const methodId = text(b.paymentMethodId,1,80);
+  const key = text(b.idempotencyKey,1,80);
+  const fixture = text(b.receiptFixtureKey,1,80);
+
+  if (!Number.isFinite(amount) || amount < 0.01 || amount > 100000)
+    throw new ApiError(400,'Invalid amount');
+
+  if (!/^synthetic:[a-z0-9_-]+$/.test(fixture))
+    throw new ApiError(400,'Synthetic fixture required');
+
+  const pm = await c.query(
+    'SELECT id FROM payment_methods WHERE id=$1 AND enabled=false',
+    [methodId]
+  );
+  if (!pm.rowCount)
+    throw new ApiError(400,'Invalid payment method');
+
+  const created = await c.query(
+    `INSERT INTO deposit_requests
+    (customer_id,payment_method_id,amount_aed,
+     customer_reference,receipt_fixture_key,
+     fixture_only,idempotency_key)
+    VALUES($1,$2,$3,$4,$5,true,$6)
+    ON CONFLICT (customer_id,idempotency_key)
+    WHERE idempotency_key IS NOT NULL
+    DO NOTHING RETURNING id,status`,
+    [actor,methodId,amount.toFixed(2),fixture,fixture,key]
+  );
+
+  if (!created.rowCount)
+    throw new ApiError(409,'Duplicate request');
+
+  await audit('deposit.fixture.create',created.rows[0].id);
+  status=201;
+  result={...created.rows[0],fixtureOnly:true,postingEnabled:false};
+
+} else if (method === 'GET' && path === '/v1/deposit-requests') {
+  result=(await c.query(
+    `SELECT id,payment_method_id,amount_aed,status,
+     fixture_only,created_at,updated_at
+     FROM deposit_requests
+     WHERE customer_id=$1 AND fixture_only=true
+     ORDER BY created_at DESC LIMIT 100`,
+    [actor]
+  )).rows;
+
+
+} else if (method === 'GET' && path === '/v1/admin/deposit-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  result=(await c.query(
+    `SELECT id,customer_id,payment_method_id,
+     amount_aed,status,fixture_only,
+     created_at,updated_at
+     FROM deposit_requests
+     WHERE fixture_only=true
+     ORDER BY created_at DESC LIMIT 100`
+  )).rows;
+
+} else if (method === 'PATCH' && path === '/v1/admin/deposit-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  const b=await body(req);
+  const id=uuid(b.id);
+  const next=String(b.status);
+
+  const found=await c.query(
+    `SELECT status FROM deposit_requests
+     WHERE id=$1 AND fixture_only=true
+     FOR UPDATE`,[id]
+  );
+
+  if (!found.rowCount)
+    throw new ApiError(404,'Request not found');
+
+  const current=found.rows[0].status;
+
+  const allowed =
+    (current==='pending' &&
+     ['under_review','rejected','cancelled'].includes(next))
+    ||
+    (current==='under_review' &&
+     ['rejected','cancelled'].includes(next));
+
+  if (!allowed)
+    throw new ApiError(409,'Invalid status transition');
+
+  await c.query(
+    `UPDATE deposit_requests
+     SET status=$1,reviewed_by=$2,
+     reviewed_at=now(),updated_at=now()
+     WHERE id=$3 AND fixture_only=true`,
+    [next,actor,id]
+  );
+
+  await audit('deposit.fixture.review',id);
+
+  result={
+    id,status:next,
+    fixtureOnly:true,
+    postingEnabled:false
+  };
+
+} else if (method === 'GET' && path === '/v1/payment-methods') {
   result = (await c.query(
     'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods ORDER BY display_order, id'
   )).rows.map(({ enabled, ...method }) => ({ ...method, enabled: false }));
