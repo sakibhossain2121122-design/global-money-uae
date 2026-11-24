@@ -13,7 +13,7 @@ async function request(path:string,method='GET',body?:unknown,token?:string){con
 try {
  await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
  for(let i=0;i<2;i++)execFileSync(process.execPath,['src/migrate.ts'],{env:{...process.env,DATABASE_URL:url},stdio:'pipe'});
- assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'8');
+ assert.equal((await pool.query('SELECT count(*) FROM schema_migrations')).rows[0].count,'9');
  child=spawn(process.execPath,['src/server.ts'],{env:{...process.env,DATABASE_URL:url,PORT:'3109'},stdio:'ignore'});
  for(let i=0;i<50;i++){try{if((await fetch('http://127.0.0.1:3109/health')).ok)break;}catch{}await new Promise(r=>setTimeout(r,100));}
  const tokens:Record<string,string>={};
@@ -65,6 +65,11 @@ try {
    assert.equal((await request('add-money-requests/'+id+'/receipts','POST',{...b,content_base64:Buffer.from('89504e470d0a1a0a','hex').toString('base64')},alice)).status,400);
   });
   await t.test('KYC and all financial posting remain disabled, audits immutable',async()=>{assert.equal((await request('kyc','GET',undefined,alice)).body.documentsAccepted,false);for(const path of ['payments','transfers','wallet/credit','wallet/debit','kyc/documents'])assert.equal((await request(path,'POST',{},alice)).status,503);for(const table of ['ledger_entries','ledger_journals','transactions'])assert.equal((await pool.query('SELECT count(*) FROM '+table)).rows[0].count,'0');await assert.rejects(()=>pool.query("INSERT INTO ledger_journals(idempotency_key) VALUES('blocked')"),/Service not yet available/);await assert.rejects(()=>pool.query('DELETE FROM audit_logs'),/Service not yet available/);assert((await pool.query("SELECT 1 FROM audit_logs WHERE action='admin.receipt.view' AND target=$1",[receipt])).rowCount);});
+  await t.test('sample review is disabled unless explicitly enabled',async()=>{
+   assert.deepEqual((await request('staging-identity-samples','GET',undefined,alice)).body,{enabled:false,submission:null});
+   assert.equal((await request('staging-identity-samples','POST',{},alice)).status,503);
+   assert.equal((await request('admin/staging-identity-samples','GET',undefined,admin)).status,503);
+  });
   await t.test('role management cannot self-escalate and revokes target sessions',async()=>{
    const id=(await pool.query("SELECT id FROM customers WHERE email='support@example.com'")).rows[0].id;
    assert.equal((await request('admin/user-role','PATCH',{id,role:'admin'},support)).status,403);

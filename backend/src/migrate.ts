@@ -17,7 +17,8 @@ const migrations = [
   { version: '005', file: '005_admin_control_system.sql' },
   { version: '006', file: '006_control_security.sql' },
   { version: '007', file: '007_wallet_request_management.sql' },
-  { version: '009', file: '009_customer_phone_registration.sql' }
+  { version: '009', file: '009_customer_phone_registration.sql' },
+  { version: '010', file: '010_staging_identity_samples.sql' }
 ];
 
 

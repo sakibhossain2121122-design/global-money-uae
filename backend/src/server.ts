@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
 import {control} from './control.ts';
+import {stagingIdentity} from './staging-identity.ts';
 import {submission,review,fields} from './add-money.ts';
 import { validateAccount } from './admin-control.ts';
 import { ApiError, text, uuid, email, phoneNumber, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
@@ -65,7 +66,8 @@ const server = createServer(async (req,res) => {
    const user=found.rows[0];if(!user) throw new ApiError(401,'Session expired'); actor=user.id;
    if(path.startsWith('/v1/admin/') && !['admin','reviewer','support'].includes(user.role)) throw new ApiError(403,'Forbidden');
    if(path.startsWith('/v1/admin/') && user.role!=='admin' && !(user.role==='reviewer' && /^\/v1\/admin\/(add-money-requests|send-money-requests|receipts)(\/|$)/.test(path)) && !(user.role==='support' && path==='/v1/admin/support')) throw new ApiError(403,'Forbidden');
-   const handled=await control(c,path,method??'',actor!,()=>body(req,path.endsWith('/receipts')?1500000:16384),audit);
+   const sample=await stagingIdentity(c,path,method??'',actor!,user.role,()=>body(req,2048),audit);
+   const handled=sample??await control(c,path,method??'',actor!,()=>body(req,path.endsWith('/receipts')?1500000:16384),audit);
    if(handled) {result=handled.data;status=handled.status??200;}
    else if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
    else if(method==='GET' && path==='/v1/me') result=user;

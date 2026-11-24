@@ -95,6 +95,8 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var sendKey by remember { mutableStateOf(UUID.randomUUID().toString()) }
     var sendPayload by remember { mutableStateOf<String?>(null) }
     var receiptRequest by remember { mutableStateOf("") }
+    var sampleStatus by remember { mutableStateOf(JSONObject()) }
+    var identitySample by remember { mutableStateOf("passport-sample.txt") }
     val context = LocalContext.current
     var notice by remember { mutableStateOf("") }
     fun call(work: () -> String, done: (String) -> Unit = {}) {
@@ -180,6 +182,13 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
             methodsLoaded = true
         }
     }
+    fun openIdentitySamples() {
+        call({ api.request("staging-identity-samples") }) {
+            sampleStatus = JSONObject(it)
+            identitySample = "passport-sample.txt"
+            page = "IdentitySamples"
+        }
+    }
     fun loadWallet() {
         availableBalance = "—"; heldBalance = "—"
         call({ api.request("wallet") }) { response ->
@@ -241,15 +250,7 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                 modifier = Modifier.fillMaxWidth()
                             )
                             if (mismatch) Text(t("Passwords do not match.", "দুই পাসওয়ার্ড মেলেনি।"), color = MaterialTheme.colorScheme.error)
-                            Text(t("Identity documents", "পরিচয়পত্র জমা"), style = MaterialTheme.typography.titleMedium)
-                            Text(t("Document submission is currently unavailable. You can register without uploading files.", "পরিচয়পত্র জমা এখন বন্ধ। ছবি ছাড়াই নিবন্ধন করতে পারবেন।"))
-                            listOf(
-                                t("Upload passport", "পাসপোর্ট আপলোড"),
-                                t("Upload UAE ID card", "UAE ID কার্ড আপলোড"),
-                                t("Upload selfie or image", "সেলফি বা ছবি আপলোড")
-                            ).forEach { label ->
-                                OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(label) }
-                            }
+                            Text(t("Identity samples: sign in after registration to submit staging samples.", "পরিচয়ের নমুনা জমা দিতে নিবন্ধনের পর লগইন করুন।"))
                         }
                         val entryReady = if (register) name.isNotBlank() && validPhone && confirmPassword == password
                             else signInIdentifier.isNotBlank()
@@ -314,6 +315,9 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                         Text(t("Reserved • AED ", "সংরক্ষিত • AED ") + heldBalance, color = Color.White)
                                         Text(t("From your authenticated ledger", "আপনার সুরক্ষিত লেজার থেকে"), color = Color.White)
                                     }
+                                }
+                                OutlinedButton(enabled = !busy, onClick = { openIdentitySamples() }) {
+                                    Text(t("Identity samples", "পরিচয়ের নমুনা"))
                                 }
                                 OutlinedButton(enabled = !busy, onClick = { loadWallet() }) { Text(t("Refresh wallet", "ওয়ালেট রিফ্রেশ")) }
                                 Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
@@ -481,6 +485,44 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                         Text("Configured fee • AED " + row.optString("fee_aed"))
                                         Text(row.optString("created_at"))
                                     } }
+                                }
+                            }
+                            "IdentitySamples" -> {
+                                Text(t("Staging identity review", "স্টেজিং পরিচয় পরীক্ষা"), style = MaterialTheme.typography.titleLarge)
+                                val submission = sampleStatus.optJSONObject("submission")
+                                if (!sampleStatus.optBoolean("enabled")) {
+                                    Text(t("Staging sample review is unavailable.", "স্টেজিং নমুনা পরীক্ষা এখন বন্ধ।"))
+                                } else if (submission == null) {
+                                    Text(t("Choose a built-in test document. A test selfie is included.", "একটি প্রস্তুত নমুনা বেছে নিন। সঙ্গে পরীক্ষার সেলফি যুক্ত থাকবে।"))
+                                    listOf(
+                                        "passport-sample.txt" to t("Passport sample", "পাসপোর্ট নমুনা"),
+                                        "uae-id-sample.txt" to t("UAE ID sample", "UAE ID নমুনা")
+                                    ).forEach { (file, label) ->
+                                        Row {
+                                            RadioButton(selected = identitySample == file, enabled = !busy, onClick = { identitySample = file })
+                                            Text(label, modifier = Modifier.padding(top = 12.dp))
+                                        }
+                                    }
+                                    Button(enabled = !busy, onClick = {
+                                        val identityContent = if (identitySample == "passport-sample.txt") "PASSPORT" else "UAE ID"
+                                        val payload = JSONObject().put("identity_sample", identitySample)
+                                            .put("identity_content", "GLOBAL MONEY UAE STAGING SAMPLE: $identityContent")
+                                            .put("selfie_sample", "selfie-sample.txt")
+                                            .put("selfie_content", "GLOBAL MONEY UAE STAGING SAMPLE: SELFIE")
+                                        call({ api.request("staging-identity-samples", "POST", payload) }) {
+                                            sampleStatus = JSONObject(it)
+                                        }
+                                    }) { Text(t("Submit test samples", "টেস্ট নমুনা জমা দিন")) }
+                                } else {
+                                    val status = when (submission.optString("status")) {
+                                        "approved" -> t("Approved for test", "টেস্টে অনুমোদিত")
+                                        "rejected" -> t("Rejected in test", "টেস্টে প্রত্যাখ্যাত")
+                                        else -> t("Pending review", "পর্যালোচনার অপেক্ষায়")
+                                    }
+                                    Text(status)
+                                    OutlinedButton(enabled = !busy, onClick = { openIdentitySamples() }) {
+                                        Text(t("Refresh status", "স্ট্যাটাস আপডেট করুন"))
+                                    }
                                 }
                             }
                             "Profile" -> {
