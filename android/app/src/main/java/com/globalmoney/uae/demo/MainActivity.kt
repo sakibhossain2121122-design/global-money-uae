@@ -403,6 +403,26 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
                                         call({ api.request("add-money-request-methods") }) { addMethods = JSONArray(it); page = "AddMoneyRequest" }
                                     }
                                 ) { Text(t("Add Money Request", "টাকা যোগ করার অনুরোধ")) }
+                                OutlinedCard(modifier = Modifier.fillMaxWidth()) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text(t("UAE wallet", "ইউএই ওয়ালেট"), style = MaterialTheme.typography.labelMedium)
+                                        Text("BOTIM Money", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                                        TextButton(enabled = !busy && addPayload == null, onClick = {
+                                            call({ api.request("add-money-request-methods") }) { response ->
+                                                val methods = JSONArray(response)
+                                                val botim = (0 until methods.length()).map { methods.getJSONObject(it) }
+                                                    .firstOrNull { it.optString("id") == "botim_money" }
+                                                if (botim == null) {
+                                                    notice = t("BOTIM Money requests are unavailable.", "BOTIM Money অনুরোধ এখন বন্ধ।")
+                                                } else {
+                                                    addMethods = methods
+                                                    addMethod = botim.getString("id")
+                                                    page = "AddMoneyRequest"
+                                                }
+                                            }
+                                        }) { Text(t("Request AED with BOTIM Money", "BOTIM Money দিয়ে AED যোগ করার অনুরোধ")) }
+                                    }
+                                }
                                 Text(t("Send to Bangladesh", "বাংলাদেশে পাঠান"), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                 PayoutTiles(enabled = !busy, bankLabel = t("Bank", "ব্যাংক")) { openSendRequest(it) }
                                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
