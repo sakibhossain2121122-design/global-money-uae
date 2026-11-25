@@ -62,6 +62,8 @@ try {
     await fresh(); await pool.query(permissions); await pool.query('GRANT UPDATE(role) ON customers TO gm_app; GRANT UPDATE(role) ON customers TO PUBLIC');
     await pool.query(permissions); await pool.query(permissions);
     const runtimeUrl = new URL(url); runtimeUrl.username = 'gm_app';
+    // The application and migration-owner passwords are distinct in CI.
+    runtimeUrl.password = new URL(process.env.TEST_RUNTIME_DATABASE_URL ?? url.href).password;
     const app = new pg.Pool({ connectionString: runtimeUrl.href });
     try {
       assert.equal((await app.query('SELECT current_user')).rows[0].current_user, 'gm_app');
