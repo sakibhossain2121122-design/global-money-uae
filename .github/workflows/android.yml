@@ -36,8 +36,9 @@ jobs:
 
       - name: Build APK and run tests
         env:
-          API_BASE_URL: ${{ vars.API_BASE_URL }}
+          API_BASE_URL: ${{ github.ref_name == 'feature/premium-remittance-full-setup' && vars.STAGING_API_BASE_URL || vars.API_BASE_URL }}
         run: |
+          if [ "$GITHUB_REF_NAME" = "feature/premium-remittance-full-setup" ] && [ "$API_BASE_URL" != "https://global-money-uae-staging-api.onrender.com" ]; then exit 1; fi
           chmod +x gradlew
           ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug "-PAPI_BASE_URL=${API_BASE_URL}"
           
