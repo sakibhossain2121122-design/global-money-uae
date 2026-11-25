@@ -4,15 +4,17 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import pg from 'pg';
 
-const url = 'postgresql://gmu_test@127.0.0.1:5544/gmu14_test';
+const url = process.env.TEST_DATABASE_URL;
+if(!url||!new URL(url).pathname.endsWith('_test'))throw Error('Disposable TEST_DATABASE_URL ending in _test required');
 
 test('Premium deposit lifecycle', async () => {
   const pool = new pg.Pool({ connectionString: url });
+  await pool.query("UPDATE payment_methods SET staging_enabled=true WHERE id='botim_money'");
   const port = 3108;
   const child = spawn(process.execPath, ['src/server.ts'], {
     env: {
       ...process.env,
-      DATABASE_URL: url,
+      DATABASE_URL: process.env.TEST_RUNTIME_DATABASE_URL??url,
       PORT: String(port),
       SYNTHETIC_REQUESTS_ENABLED: 'true'
     },

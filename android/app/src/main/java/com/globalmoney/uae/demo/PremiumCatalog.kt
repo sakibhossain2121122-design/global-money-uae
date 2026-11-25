@@ -8,6 +8,7 @@ internal object PremiumCatalog {
     fun homeTitle(bengali: Boolean) = if (bengali) "আপনার পরিবারের কাছে" else "Closer to your family"
     fun moneyNotice(bengali: Boolean) = if (bengali) "আর্থিক সেবা এখনো বন্ধ রয়েছে" else "Financial services are currently disabled"
     fun statusLabel(status: String, bengali: Boolean): String {
+        if (status == "successful") return if (bengali) "সফল (স্টেজিং)" else "Successful (Staging)"
         if (!bengali) return status.replace('_', ' ')
         return when (status) {
             "pending" -> "অপেক্ষমাণ"

@@ -10,9 +10,20 @@
     "test:migrations": "node test/migrations-premium.test.ts",
     "typecheck": "tsc --noEmit",
     "test:integration": "node test/integration.test.ts",
-    "test:payment-methods": "node --experimental-test-module-mocks test/payment-methods-readonly.test.mjs"
+    "test:payment-methods": "node --experimental-test-module-mocks test/payment-methods-readonly.test.mjs",
+    "test:premium": "node test/premium-integration.test.ts",
+    "test:premium15": "node test/premium15-integration.test.ts",
+    "test:integrity": "node test/migration-integrity.test.ts"
   },
-  "dependencies": { "pg": "8.16.3" },
-  "devDependencies": { "@types/node": "24.10.1", "@types/pg": "8.15.6", "typescript": "5.9.3" },
-  "engines": { "node": ">=24.0.0" }
+  "dependencies": {
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@types/pg": "8.15.6",
+    "typescript": "5.9.3"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  }
 }

@@ -11,8 +11,8 @@ android {
         applicationId = "com.globalmoney.uae.demo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.4.0"
+        versionCode = 15
+        versionName = "1.5.0"
         val apiUrl = providers.gradleProperty("API_BASE_URL").orElse("https://global-money-uae-staging-api.onrender.com").get()
         require(apiUrl.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?"))) { "API_BASE_URL must be an HTTPS origin" }
         buildConfigField("String", "API_BASE_URL", "\"$apiUrl\"")
@@ -30,6 +30,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.ui:ui-tooling-preview")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
 }

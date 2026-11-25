@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
   push:
-    branches: [feature/premium-upgrade, feature/premium-remittance-full-setup]
+    branches: [feature/premium-upgrade, feature/premium-remittance-full-setup, feature/premium-ui-v1.5]
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
 permissions:
   contents: read
@@ -29,6 +29,23 @@ jobs:
         working-directory: backend
         env:
           TEST_DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/global_money_test
+      - name: Guarded PostgreSQL 17 migrations and application-role regressions
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/global_money_test
+          TEST_DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/global_money_test
+          TEST_ADMIN_DATABASE_URL: postgresql://postgres:test-only-password@127.0.0.1:5432/global_money_test
+          TEST_RUNTIME_DATABASE_URL: postgresql://gm_app:test-only-runtime@127.0.0.1:5432/global_money_test
+        run: |
+          npm run test:migrations
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+          npm run migrate
+          npm run migrate
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f sql/gm-app-permissions.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE gm_app PASSWORD 'test-only-runtime';"
+          npm run test:premium15
+          npm run test:premium
+          npm run test:integrity
       - run: npm ci && npm run build
         working-directory: admin
       - run: python3 android/tools/check_project.py

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
+import { premium15 } from './premium15.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -14,7 +15,7 @@ async function body(req: IncomingMessage): Promise<Record<string,unknown>> {
  catch { throw new ApiError(400,'Invalid JSON'); }
 }
 function send(res: ServerResponse, status:number, data:unknown) { res.writeHead(status, {'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'",'Strict-Transport-Security':'max-age=31536000'}); res.end(JSON.stringify(data)); }
-const unavailable = /^\/v1\/(add-money|botim-money|payments|transfers|remittances|wallet\/credit|wallet\/debit|kyc\/documents)(\/|$)/;
+const unavailable = /^\/v1\/(add-money|botim-money|payments|payouts|transfers|remittances|wallet\/credit|wallet\/debit|kyc\/documents)(\/|$)/;
 const server = createServer(async (req,res) => {
  let actor: string | null = null;
  const c = await pool.connect().catch(() => null);
@@ -51,7 +52,9 @@ const server = createServer(async (req,res) => {
    const found=await c.query("SELECT c.id,c.email,c.name,c.role FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
    const user=found.rows[0];if(!user) throw new ApiError(401,'Session expired'); actor=user.id;
    if(path.startsWith('/v1/admin/') && user.role!=='admin') throw new ApiError(403,'Forbidden');
-   if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
+   const premium=await premium15({c,path,method,user,body:()=>body(req),audit});
+   if(premium){result=premium.data;status=premium.status??200;}
+   else if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
    else if(method==='GET' && path==='/v1/me') result=user;
    else if(method==='PATCH' && path==='/v1/me') {const b=await body(req);await c.query('UPDATE customers SET name=$1 WHERE id=$2',[text(b.name),actor]);await audit('profile.update');result={ok:true};}
    else if(method==='GET' && path==='/v1/wallet') result={balance:null,currency:'AED',postingEnabled:false};
@@ -87,6 +90,7 @@ const server = createServer(async (req,res) => {
     throw new ApiError(403,'Customer access required');
 
   const b = await body(req);
+  if(!/^[0-9]{1,6}(\.[0-9]{1,2})?$/.test(String(b.amountAed)))throw new ApiError(400,'Exact decimal amount required');
   const amount = Number(b.amountAed);
   const methodId = text(b.paymentMethodId,1,80);
   const key = text(b.idempotencyKey,1,80);
@@ -99,7 +103,7 @@ const server = createServer(async (req,res) => {
     throw new ApiError(400,'Synthetic fixture required');
 
   const pm = await c.query(
-    'SELECT id FROM payment_methods WHERE id=$1 AND enabled=false',
+    'SELECT id FROM payment_methods WHERE id=$1 AND enabled=false AND staging_enabled=true',
     [methodId]
   );
   if (!pm.rowCount)
@@ -176,6 +180,7 @@ const server = createServer(async (req,res) => {
     throw new ApiError(404,'Request not found');
 
   const current=found.rows[0].status;
+  if(b.expectedStatus!==undefined&&b.expectedStatus!==current)throw new ApiError(409,'Stale request; refresh required');
 
   const allowed =
     (current==='pending' &&
@@ -219,6 +224,7 @@ const server = createServer(async (req,res) => {
     throw new ApiError(403,'Customer access required');
 
   const b = await body(req);
+  if(!/^[0-9]{1,6}(\.[0-9]{1,2})?$/.test(String(b.amountAed)))throw new ApiError(400,'Exact decimal amount required');
   const amount = Number(b.amountAed);
   const beneficiaryId = uuid(b.beneficiaryId);
   const key = text(b.idempotencyKey,1,80);
@@ -332,6 +338,7 @@ const server = createServer(async (req,res) => {
     throw new ApiError(404,'Request not found');
 
   const current=found.rows[0].status;
+  if(b.expectedStatus!==undefined&&b.expectedStatus!==current)throw new ApiError(409,'Stale request; refresh required');
 
   const allowed=
     (current==='pending' &&
@@ -456,7 +463,7 @@ const server = createServer(async (req,res) => {
   await c.query('COMMIT');send(res,status,result);
  } catch(e) {
   await c.query('ROLLBACK').catch(()=>{});
-  const status=e instanceof ApiError?e.status:500;
+  const status=e instanceof ApiError?e.status:((e as {code?:string}).code==='23505'?409:500);
   // Never log passwords, tokens, beneficiary accounts, request bodies or raw SQL errors.
   console.error(JSON.stringify({event:'request.rejected',actor,status}));
   send(res,status,{error:e instanceof ApiError?e.message:'Request could not be completed'});

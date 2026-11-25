@@ -5,7 +5,7 @@ if (!url || !new URL(url).pathname.endsWith('_test')) throw new Error('TEST_DATA
 const pool = new pg.Pool({connectionString:url});
 try {
   await pool.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
-  for (const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql','004_premium_staging.sql','005_request_lifecycle.sql','006_request_status.sql','007_transaction_reference.sql','008_reference_history.sql']) {
+  for (const file of ['001_foundation.sql','002_payment_methods.sql','003_admin_controls.sql','004_premium_staging.sql','005_request_lifecycle.sql','006_request_status.sql','007_transaction_reference.sql','008_reference_history.sql','009_reconstructed_premium_ui.sql']) {
     await pool.query(await readFile(new URL('../migrations/'+file,import.meta.url),'utf8'));
   }
   const methods = await pool.query('SELECT id,enabled FROM payment_methods ORDER BY id');
