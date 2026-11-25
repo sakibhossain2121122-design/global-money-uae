@@ -117,6 +117,182 @@ test('Premium deposit lifecycle', async () => {
       { id, status: 'rejected' }, admin
     )).status, 200);
 
+
+    const successRequest = await api(
+      'deposit-requests', 'POST',
+      {
+        ...payload,
+        idempotencyKey: `success-${suffix}`
+      }, alice
+    );
+
+    assert.equal(successRequest.status, 201);
+
+    const successId = successRequest.body.id;
+
+    assert.equal((await api(
+      'admin/deposit-requests', 'PATCH',
+      { id: successId, status: 'successful' }, alice
+    )).status, 403);
+
+    assert.equal((await api(
+      'admin/deposit-requests', 'PATCH',
+      { id: successId, status: 'under_review' }, admin
+    )).status, 200);
+
+    const reviewed = await api(
+      'admin/deposit-requests', 'PATCH',
+      { id: successId,
+        status: 'successful',
+        transactionReference: 'TEST-DEP-' + String(suffix)
+      }, admin
+    );
+
+    assert.equal(reviewed.status, 200);
+    assert.equal(reviewed.body.status, 'successful');
+    assert.equal(reviewed.body.postingEnabled, false);
+
+    assert.equal((await api(
+      'admin/deposit-requests', 'PATCH',
+      { id: successId, status: 'pending' }, admin
+    )).status, 409);
+
+
+    const editedRef = 'TEST-EDIT-' + String(suffix);
+
+    assert.equal((await api(
+      'admin/deposit-reference', 'PATCH',
+      {id:successId,transactionReference:editedRef},
+      alice
+    )).status,403);
+
+    const edited = await api(
+      'admin/deposit-reference', 'PATCH',
+      {id:successId,transactionReference:editedRef},
+      admin
+    );
+
+    assert.equal(edited.status,200);
+    assert.equal(edited.body.transactionReference,editedRef);
+    assert.equal(edited.body.status,'successful');
+    assert.equal(edited.body.postingEnabled,false);
+
+    console.log('Admin deposit reference edit: PASS');
+
+    console.log('Successful synthetic deposit: PASS');
+
+
+    const beneficiary = await api(
+      'beneficiaries', 'POST',
+      {
+        name: 'Synthetic Test Beneficiary',
+        provider: 'Bank',
+        account: 'TEST-000001',
+        bank: 'Synthetic Test Bank'
+      }, alice
+    );
+
+    assert.equal(beneficiary.status, 201);
+
+    const sendPayload = {
+      amountAed: 50,
+      beneficiaryId: beneficiary.body.id,
+      idempotencyKey: `synthetic:send-${suffix}`
+    };
+
+    assert.equal((await api(
+      'send-money-requests', 'POST',
+      sendPayload, bob
+    )).status, 404);
+
+    const send = await api(
+      'send-money-requests', 'POST',
+      sendPayload, alice
+    );
+
+    assert.equal(send.status, 201);
+    assert.equal(send.body.status, 'pending');
+    assert.equal(send.body.postingEnabled, false);
+    assert.equal(send.body.payoutEnabled, false);
+
+    assert.equal((await api(
+      'send-money-requests', 'POST',
+      sendPayload, alice
+    )).status, 409);
+
+    const sendId = send.body.id;
+
+    assert.equal((await api(
+      'admin/send-money-requests', 'PATCH',
+      { id: sendId, status: 'successful' }, alice
+    )).status, 403);
+
+    const sendReview = await api(
+      'admin/send-money-requests', 'PATCH',
+      { id: sendId,
+        status: 'successful',
+        transactionReference: 'TEST-SEND-' + String(suffix)
+      }, admin
+    );
+
+    assert.equal(sendReview.status, 200);
+    assert.equal(sendReview.body.status, 'successful');
+    assert.equal(sendReview.body.postingEnabled, false);
+    assert.equal(sendReview.body.payoutEnabled, false);
+
+    assert.equal((await api(
+      'admin/send-money-requests', 'PATCH',
+      { id: sendId, status: 'pending' }, admin
+    )).status, 409);
+
+    const rejectedSend = await api(
+      'send-money-requests', 'POST',
+      {
+        ...sendPayload,
+        idempotencyKey: `synthetic:reject-${suffix}`
+      }, alice
+    );
+
+    assert.equal(rejectedSend.status, 201);
+
+    assert.equal((await api(
+      'admin/send-money-requests', 'PATCH',
+      { id: rejectedSend.body.id, status: 'rejected' },
+      admin
+    )).status, 200);
+
+
+    const sendEditedRef = 'TEST-SEND-EDIT-' + String(suffix);
+
+    assert.equal((await api(
+      'admin/send-money-reference','PATCH',
+      {id:sendId,transactionReference:sendEditedRef},
+      alice
+    )).status,403);
+
+    assert.equal((await api(
+      'admin/send-money-reference','PATCH',
+      {id:sendId,transactionReference:editedRef},
+      admin
+    )).status,409);
+
+    const sendEdited = await api(
+      'admin/send-money-reference','PATCH',
+      {id:sendId,transactionReference:sendEditedRef},
+      admin
+    );
+
+    assert.equal(sendEdited.status,200);
+    assert.equal(sendEdited.body.transactionReference,sendEditedRef);
+    assert.equal(sendEdited.body.status,'successful');
+    assert.equal(sendEdited.body.postingEnabled,false);
+    assert.equal(sendEdited.body.payoutEnabled,false);
+
+    console.log('Admin Send Money reference edit: PASS');
+    console.log('Cross-table duplicate protection: PASS');
+
+    console.log('Synthetic Send Money lifecycle: PASS');
+
     const wallet = await api(
       'wallet', 'GET', undefined, alice
     );

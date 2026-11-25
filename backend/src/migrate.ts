@@ -8,7 +8,10 @@ const migrations = [
   {version:'002',file:'002_payment_methods.sql'},
   {version:'003',file:'003_admin_controls.sql'},
   {version:'004',file:'004_premium_staging.sql'},
-  {version:'005',file:'005_request_lifecycle.sql'}
+  {version:'005',file:'005_request_lifecycle.sql'},
+ {version:'006',file:'006_request_status.sql'},
+  {version:'007',file:'007_transaction_reference.sql'},
+  {version:'008',file:'008_reference_history.sql'}
 ];
 const client = await pool.connect();
 try {
