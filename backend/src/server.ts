@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import pg from 'pg';
+import { premium15 } from './premium15.ts';
 import { ApiError, text, uuid, email, password, hashPassword, verifyPassword, token, digest, beneficiary, financialPosting, Limiter } from './security.ts';
 if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
 const pool = new pg.Pool({connectionString:process.env.DATABASE_URL, max:10, connectionTimeoutMillis:5000});
@@ -14,7 +15,7 @@ async function body(req: IncomingMessage): Promise<Record<string,unknown>> {
  catch { throw new ApiError(400,'Invalid JSON'); }
 }
 function send(res: ServerResponse, status:number, data:unknown) { res.writeHead(status, {'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Content-Security-Policy':"default-src 'none'",'Strict-Transport-Security':'max-age=31536000'}); res.end(JSON.stringify(data)); }
-const unavailable = /^\/v1\/(add-money|botim-money|payments|transfers|remittances|wallet\/credit|wallet\/debit|kyc\/documents)(\/|$)/;
+const unavailable = /^\/v1\/(add-money|botim-money|payments|payouts|transfers|remittances|wallet\/credit|wallet\/debit|kyc\/documents)(\/|$)/;
 const server = createServer(async (req,res) => {
  let actor: string | null = null;
  const c = await pool.connect().catch(() => null);
@@ -51,7 +52,9 @@ const server = createServer(async (req,res) => {
    const found=await c.query("SELECT c.id,c.email,c.name,c.role FROM sessions s JOIN customers c ON c.id=s.customer_id WHERE s.token_hash=$1 AND s.expires_at>now() AND c.status='active'",[digest(bearer)]);
    const user=found.rows[0];if(!user) throw new ApiError(401,'Session expired'); actor=user.id;
    if(path.startsWith('/v1/admin/') && user.role!=='admin') throw new ApiError(403,'Forbidden');
-   if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
+   const premium=await premium15({c,path,method,user,body:()=>body(req),audit});
+   if(premium){result=premium.data;status=premium.status??200;}
+   else if(method==='POST' && path==='/v1/auth/logout') {await c.query('DELETE FROM sessions WHERE token_hash=$1',[digest(bearer)]);await audit('session.logout');result={ok:true};}
    else if(method==='GET' && path==='/v1/me') result=user;
    else if(method==='PATCH' && path==='/v1/me') {const b=await body(req);await c.query('UPDATE customers SET name=$1 WHERE id=$2',[text(b.name),actor]);await audit('profile.update');result={ok:true};}
    else if(method==='GET' && path==='/v1/wallet') result={balance:null,currency:'AED',postingEnabled:false};
@@ -78,7 +81,380 @@ const server = createServer(async (req,res) => {
    } else if(method==='PUT' && path==='/v1/admin/rates') {
     const b=await body(req);const value=text(b.value,1,20);if(!/^\d{1,10}(\.\d{1,6})?$/.test(value)||Number(value)<=0)throw new ApiError(400,'Invalid rate');
     await c.query("INSERT INTO rates(pair,value) VALUES('AED/BDT',$1) ON CONFLICT(pair) DO UPDATE SET value=$1,updated_at=now()",[value]);await audit('admin.rate.configure','AED/BDT');result={ok:true,customerVisible:false};
-   } else if (method === 'GET' && path === '/v1/payment-methods') {
+   
+} else if (method === 'POST' && path === '/v1/deposit-requests') {
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  if (user.role !== 'customer')
+    throw new ApiError(403,'Customer access required');
+
+  const b = await body(req);
+  if(!/^[0-9]{1,6}(\.[0-9]{1,2})?$/.test(String(b.amountAed)))throw new ApiError(400,'Exact decimal amount required');
+  const amount = Number(b.amountAed);
+  const methodId = text(b.paymentMethodId,1,80);
+  const key = text(b.idempotencyKey,1,80);
+  const fixture = text(b.receiptFixtureKey,1,80);
+
+  if (!Number.isFinite(amount) || amount < 0.01 || amount > 100000)
+    throw new ApiError(400,'Invalid amount');
+
+  if (!/^synthetic:[a-z0-9_-]+$/.test(fixture))
+    throw new ApiError(400,'Synthetic fixture required');
+
+  const pm = await c.query(
+    'SELECT id FROM payment_methods WHERE id=$1 AND enabled=false AND staging_enabled=true',
+    [methodId]
+  );
+  if (!pm.rowCount)
+    throw new ApiError(400,'Invalid payment method');
+
+  const created = await c.query(
+    `INSERT INTO deposit_requests
+    (customer_id,payment_method_id,amount_aed,
+     customer_reference,receipt_fixture_key,
+     fixture_only,idempotency_key)
+    VALUES($1,$2,$3,$4,$5,true,$6)
+    ON CONFLICT (customer_id,idempotency_key)
+    WHERE idempotency_key IS NOT NULL
+    DO NOTHING RETURNING id,status`,
+    [actor,methodId,amount.toFixed(2),fixture,fixture,key]
+  );
+
+  if (!created.rowCount)
+    throw new ApiError(409,'Duplicate request');
+
+  await audit('deposit.fixture.create',created.rows[0].id);
+  status=201;
+  result={...created.rows[0],fixtureOnly:true,postingEnabled:false};
+
+} else if (method === 'GET' && path === '/v1/deposit-requests') {
+  result=(await c.query(
+    `SELECT id,payment_method_id,amount_aed,status,
+     fixture_only,created_at,updated_at,transaction_reference,reference_updated_at
+     FROM deposit_requests
+     WHERE customer_id=$1 AND fixture_only=true
+     ORDER BY created_at DESC LIMIT 100`,
+    [actor]
+  )).rows;
+
+
+} else if (method === 'GET' && path === '/v1/admin/deposit-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  result=(await c.query(
+    `SELECT id,customer_id,payment_method_id,
+     amount_aed,status,fixture_only,
+     created_at,updated_at,transaction_reference,reference_updated_at
+     FROM deposit_requests
+     WHERE fixture_only=true
+     ORDER BY created_at DESC LIMIT 100`
+  )).rows;
+
+} else if (method === 'PATCH' && path === '/v1/admin/deposit-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  const b=await body(req);
+  const id=uuid(b.id);
+  const next=String(b.status);
+  const trx = next==='successful'
+    ? String(b.transactionReference ?? '').trim().toUpperCase()
+    : null;
+
+  if (next==='successful' &&
+      !/^TEST-[A-Z0-9-]{3,60}$/.test(trx ?? ''))
+    throw new ApiError(400,'Valid test TRX ID required');
+
+  const found=await c.query(
+    `SELECT status FROM deposit_requests
+     WHERE id=$1 AND fixture_only=true
+     FOR UPDATE`,[id]
+  );
+
+  if (!found.rowCount)
+    throw new ApiError(404,'Request not found');
+
+  const current=found.rows[0].status;
+  if(b.expectedStatus!==undefined&&b.expectedStatus!==current)throw new ApiError(409,'Stale request; refresh required');
+
+  const allowed =
+    (current==='pending' &&
+     ['under_review','successful','rejected','cancelled'].includes(next))
+    ||
+    (current==='under_review' &&
+     ['successful','rejected','cancelled'].includes(next));
+
+  if (!allowed)
+    throw new ApiError(409,'Invalid status transition');
+
+  await c.query(
+    `UPDATE deposit_requests
+     SET status=$1,reviewed_by=$2,
+     reviewed_at=now(),updated_at=now(),
+       transaction_reference=$4,
+       reference_updated_at=CASE
+         WHEN $4::text IS NOT NULL THEN now()
+         ELSE NULL END,
+       reference_updated_by=CASE
+         WHEN $4::text IS NOT NULL THEN $2::uuid
+         ELSE NULL END
+     WHERE id=$3 AND fixture_only=true`,
+    [next,actor,id,trx]
+  );
+
+  await audit('deposit.fixture.review',id);
+
+  result={
+    id,status:next,
+    fixtureOnly:true,
+    postingEnabled:false
+  };
+
+
+} else if (method === 'POST' && path === '/v1/send-money-requests') {
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  if (user.role !== 'customer')
+    throw new ApiError(403,'Customer access required');
+
+  const b = await body(req);
+  if(!/^[0-9]{1,6}(\.[0-9]{1,2})?$/.test(String(b.amountAed)))throw new ApiError(400,'Exact decimal amount required');
+  const amount = Number(b.amountAed);
+  const beneficiaryId = uuid(b.beneficiaryId);
+  const key = text(b.idempotencyKey,1,80);
+
+  if (!Number.isFinite(amount) || amount < 0.01 || amount > 100000)
+    throw new ApiError(400,'Invalid amount');
+
+  if (!/^synthetic:[a-z0-9_-]+$/.test(key))
+    throw new ApiError(400,'Synthetic request required');
+
+  const owner = await c.query(
+    'SELECT id FROM beneficiaries WHERE id=$1 AND customer_id=$2',
+    [beneficiaryId,actor]
+  );
+
+  if (!owner.rowCount)
+    throw new ApiError(404,'Beneficiary not found');
+
+  const created = await c.query(
+    `INSERT INTO service_requests
+    (customer_id,request_type,amount_aed,beneficiary_id,idempotency_key,customer_note)
+    VALUES($1,'send_money',$2,$3,$4,'Synthetic request only')
+    ON CONFLICT(customer_id,idempotency_key)
+    WHERE idempotency_key IS NOT NULL
+    DO NOTHING RETURNING id,status`,
+    [actor,amount.toFixed(2),beneficiaryId,key]
+  );
+
+  if (!created.rowCount)
+    throw new ApiError(409,'Duplicate request');
+
+  const id = created.rows[0].id;
+
+  await c.query(
+    `INSERT INTO service_request_events
+    (request_id,actor_id,new_status)
+    VALUES($1,$2,'pending')`,
+    [id,actor]
+  );
+
+  await audit('send.fixture.create',id);
+
+  status=201;
+  result={
+    ...created.rows[0],
+    fixtureOnly:true,
+    postingEnabled:false,
+    payoutEnabled:false
+  };
+
+} else if (method === 'GET' && path === '/v1/send-money-requests') {
+  if (user.role !== 'customer')
+    throw new ApiError(403,'Customer access required');
+
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  result=(await c.query(
+    `SELECT id,amount_aed,beneficiary_id,status,created_at,updated_at,transaction_reference,reference_updated_at
+    FROM service_requests
+    WHERE customer_id=$1
+    AND request_type='send_money'
+    AND customer_note='Synthetic request only'
+    AND idempotency_key LIKE 'synthetic:%'
+    ORDER BY created_at DESC LIMIT 100`,
+    [actor]
+  )).rows;
+
+
+} else if (method === 'GET' && path === '/v1/admin/send-money-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  result=(await c.query(
+    `SELECT id,customer_id,beneficiary_id,
+      amount_aed,status,created_at,updated_at,transaction_reference,reference_updated_at
+     FROM service_requests
+     WHERE request_type='send_money'
+       AND customer_note='Synthetic request only'
+       AND idempotency_key LIKE 'synthetic:%'
+     ORDER BY created_at DESC LIMIT 100`
+  )).rows;
+
+} else if (method === 'PATCH' && path === '/v1/admin/send-money-requests') {
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  const b=await body(req);
+  const id=uuid(b.id);
+  const next=String(b.status);
+  const trx = next==='successful'
+    ? String(b.transactionReference ?? '').trim().toUpperCase()
+    : null;
+
+  if (next==='successful' &&
+      !/^TEST-[A-Z0-9-]{3,60}$/.test(trx ?? ''))
+    throw new ApiError(400,'Valid test TRX ID required');
+
+  const found=await c.query(
+    `SELECT status FROM service_requests
+     WHERE id=$1 AND request_type='send_money'
+       AND customer_note='Synthetic request only'
+       AND idempotency_key LIKE 'synthetic:%'
+     FOR UPDATE`,[id]
+  );
+
+  if (!found.rowCount)
+    throw new ApiError(404,'Request not found');
+
+  const current=found.rows[0].status;
+  if(b.expectedStatus!==undefined&&b.expectedStatus!==current)throw new ApiError(409,'Stale request; refresh required');
+
+  const allowed=
+    (current==='pending' &&
+      ['under_review','successful','rejected','cancelled'].includes(next))
+    ||
+    (current==='under_review' &&
+      ['successful','rejected','cancelled'].includes(next));
+
+  if (!allowed)
+    throw new ApiError(409,'Invalid status transition');
+
+  await c.query(
+    `UPDATE service_requests
+     SET status=$1,reviewed_by=$2,
+       reviewed_at=now(),updated_at=now(),
+       transaction_reference=$4,
+       reference_updated_at=CASE
+         WHEN $4::text IS NOT NULL THEN now()
+         ELSE NULL END,
+       reference_updated_by=CASE
+         WHEN $4::text IS NOT NULL THEN $2::uuid
+         ELSE NULL END
+     WHERE id=$3`,
+    [next,actor,id,trx]
+  );
+
+  await c.query(
+    `INSERT INTO service_request_events
+     (request_id,actor_id,previous_status,new_status)
+     VALUES($1,$2,$3,$4)`,
+    [id,actor,current,next]
+  );
+
+  await audit('send.fixture.review',id);
+
+  result={
+    id,status:next,
+    fixtureOnly:true,
+    postingEnabled:false,
+    payoutEnabled:false
+  };
+
+} else if (method === 'PATCH' &&
+  ['/v1/admin/deposit-reference',
+   '/v1/admin/send-money-reference'].includes(path)) {
+
+  if (user.role !== 'admin')
+    throw new ApiError(403,'Admin access required');
+
+  if (process.env.SYNTHETIC_REQUESTS_ENABLED !== 'true')
+    throw new ApiError(503,'Synthetic requests disabled');
+
+  const b=await body(req);
+  const id=uuid(b.id);
+  const trx=String(b.transactionReference ?? '')
+    .trim().toUpperCase();
+
+  if (!/^TEST-[A-Z0-9-]{3,60}$/.test(trx))
+    throw new ApiError(400,'Valid test TRX ID required');
+
+  const deposit=path==='/v1/admin/deposit-reference';
+
+  const table=deposit
+    ? 'deposit_requests'
+    : 'service_requests';
+
+  const filter=deposit
+    ? 'fixture_only=true'
+    : "request_type='send_money' AND customer_note='Synthetic request only' AND idempotency_key LIKE 'synthetic:%'";
+
+  const found=await c.query(
+    `SELECT status,transaction_reference
+     FROM ${table}
+     WHERE id=$1 AND ${filter}
+     FOR UPDATE`,[id]
+  );
+
+  if (!found.rowCount)
+    throw new ApiError(404,'Request not found');
+
+  if (found.rows[0].status !== 'successful')
+    throw new ApiError(409,'Successful test request required');
+
+  if (found.rows[0].transaction_reference !== trx) {
+    try {
+      await c.query(
+        `UPDATE ${table}
+         SET transaction_reference=$1,
+         reference_updated_by=$2,
+         reference_updated_at=now(),
+         updated_at=now()
+         WHERE id=$3 AND ${filter}`,
+        [trx,actor,id]
+      );
+    } catch(e) {
+      if ((e as {code?:string}).code==='23505')
+        throw new ApiError(409,'Duplicate test TRX ID');
+      throw e;
+    }
+
+    await audit(
+      deposit ? 'deposit.reference.edit'
+              : 'send.reference.edit',id
+    );
+  }
+
+  result={
+    id,
+    status:'successful',
+    transactionReference:trx,
+    fixtureOnly:true,
+    postingEnabled:false,
+    payoutEnabled:false
+  };
+
+} else if (method === 'GET' && path === '/v1/payment-methods') {
   result = (await c.query(
     'SELECT id, name, country, currency, logo_url, display_order, enabled FROM payment_methods ORDER BY display_order, id'
   )).rows.map(({ enabled, ...method }) => ({ ...method, enabled: false }));
@@ -87,7 +463,7 @@ const server = createServer(async (req,res) => {
   await c.query('COMMIT');send(res,status,result);
  } catch(e) {
   await c.query('ROLLBACK').catch(()=>{});
-  const status=e instanceof ApiError?e.status:500;
+  const status=e instanceof ApiError?e.status:((e as {code?:string}).code==='23505'?409:500);
   // Never log passwords, tokens, beneficiary accounts, request bodies or raw SQL errors.
   console.error(JSON.stringify({event:'request.rejected',actor,status}));
   send(res,status,{error:e instanceof ApiError?e.message:'Request could not be completed'});
