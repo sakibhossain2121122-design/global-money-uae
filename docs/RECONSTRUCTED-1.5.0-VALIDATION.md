@@ -29,7 +29,7 @@ Forward migration 009 adds these controls and strengthens immutable audit/event/
 | Android lintDebug and assembleDebug | PASS, JDK 17 / Gradle 8.9 / SDK 35 |
 | Android screenshot instrumentation APK compilation | PASS |
 | Native emulator screenshots / device acceptance | BLOCKED: no hardware accelerator, software guest did not reach a usable app session; normal adb server also could not write its read-only home directory |
-| Hosted GitHub Actions | UNKNOWN until the pushed branch runs; local build success is not hosted CI success |
+| Hosted GitHub Actions | PASS — Android run 45655647407 and corrected platform run 45655975243 |
 | Existing deployed staging backend supports the new 1.5 contracts | BLOCKED pending a separately reviewed backend rollout; no backend deployment or live database change was performed |
 
 The native screenshot test is opt-in (`localScreenshots=true`), uses the real UI and a disposable local API through emulator host-loopback, and is excluded from the distributed application. It contains no fabricated balance, rate or transaction responses. Admin screenshots show actual synthetic request rows created by local regression tests, not real money transfers. The screenshot environment has no rate configured and no seeded balances or transactions.
@@ -52,3 +52,9 @@ The APK has a fixed staging HTTPS origin. The new `overview`, `staging-methods`,
 Use Node 24, PostgreSQL 17, JDK 17 and Android SDK 35/build tools 34. In a disposable local database run the guarded migration owner connection, then the permission SQL. Run the API with a separate gm_app connection and enable only `SYNTHETIC_REQUESTS_ENABLED=true` for fixture request tests. Run `npm test`, `npm run typecheck`, `npm run test:payment-methods`, the integration scripts, and `test:integrity`. All destructive test setup requires a disposable `_test` database. The Actions workflows describe the isolated PostgreSQL and Android checks. Do not use those test commands against staging or production databases.
 
 Before deployment, a database owner must review and explicitly remediate any unchecksummed historical schema outside the normal runner. Do not automatically stamp current checksums over unknown history. Keep the money-posting triggers and disabled adapters intact.
+
+## Hosted verification update
+
+The [Android workflow](https://github.com/sakibhossain2121122-design/global-money-uae/actions/runs/45655647407) passed for application commit `86ca4e93bb647cff06f2523d5b1d08ab0c238172` and published the reconstructed staging artifact. The [platform workflow](https://github.com/sakibhossain2121122-design/global-money-uae/actions/runs/45655975243) passed at `0e05c84b4bdf74a576ee67267e9ab4cbba19f96d` after correcting a test fixture to use the distinct gm_app password instead of the migration owner password. Separate SCRAM-authenticated local PostgreSQL 17 integrity tests also passed. No runtime/Android code changed in that fixture fix. This final documentation update records those results.
+
+The Drive APK hash above identifies the locally built, readback-verified binary. The GitHub-built APK has its own debug signing identity and its own checksum inside the CI artifact; do not compare its bytes to the local APK hash. Neither build is a production-signed release.
