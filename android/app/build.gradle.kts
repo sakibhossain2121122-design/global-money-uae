@@ -11,17 +11,14 @@ android {
         applicationId = "com.globalmoney.uae.demo"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
-        val apiUrl = providers.gradleProperty("API_BASE_URL").orElse("").get()
-        require(apiUrl.isEmpty() || apiUrl.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?"))) { "API_BASE_URL must be an HTTPS origin" }
+        versionCode = 14
+        versionName = "1.4.0"
+        val apiUrl = providers.gradleProperty("API_BASE_URL").orElse("https://global-money-uae-staging-api.onrender.com").get()
+        require(apiUrl.matches(Regex("https://[A-Za-z0-9.-]+(:[0-9]+)?"))) { "API_BASE_URL must be an HTTPS origin" }
         buildConfigField("String", "API_BASE_URL", "\"$apiUrl\"")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { compose = true; buildConfig = true }
     lint { abortOnError = true }

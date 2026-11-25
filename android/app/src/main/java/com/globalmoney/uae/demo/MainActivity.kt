@@ -15,6 +15,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -72,6 +74,13 @@ private fun PremiumApp(api: AccountApi, run: (() -> String, (Result<String>) -> 
     var methodsLoaded by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
+    var requestAmount by remember { mutableStateOf("") }
+    var selectedMethod by remember { mutableStateOf("") }
+    var selectedBeneficiary by remember { mutableStateOf("") }
+    var requestKey by remember {
+        mutableStateOf(java.util.UUID.randomUUID().toString())
+    }
+
     fun call(work: () -> String, done: (String) -> Unit = {}) {
         busy = true; notice = ""
         run(work) { result ->
@@ -102,6 +111,11 @@ result.mapCatching { done(it) }.onFailure { error ->
                 }
 
                 if (api.token == null && signedIn) {
+                    requestAmount = ""
+                    selectedMethod = ""
+                    selectedBeneficiary = ""
+                    requestKey = java.util.UUID.randomUUID().toString()
+                    page = "Home"
                     signedIn = false
                     paymentMethods = emptyList()
                     methodsLoaded = false
@@ -159,6 +173,11 @@ result.mapCatching { done(it) }.onFailure { error ->
                             TextButton(enabled = !busy, onClick = { call({ api.request("me") }) { name = JSONObject(it).getString("name"); page = "Profile" } }) { Text(t("Profile", "প্রোফাইল")) }
                             TextButton(enabled = !busy, onClick = {
                                 call({ api.request("auth/logout", "POST", JSONObject()) }) {
+                                    requestAmount = ""
+                                    selectedMethod = ""
+                                    selectedBeneficiary = ""
+                                    requestKey = java.util.UUID.randomUUID().toString()
+                                    page = "Home"
                                     api.token = null; signedIn = false; paymentMethods = emptyList(); methodsLoaded = false; rows = JSONArray(); name = ""; account = ""; bank = ""; subject = ""; message = ""
                                 }
                             }) { Text(t("Logout", "লগআউট")) }
@@ -172,16 +191,180 @@ result.mapCatching { done(it) }.onFailure { error ->
                                     }
                                 }
                                 Text(t("AED / BDT rate: —", "AED / BDT রেট: —"))
-                                listOf("Add Money" to "অর্থ যোগ করুন", "BOTIM MONEY" to "BOTIM MONEY", "Send money" to "অর্থ পাঠান").forEach { (en,bengali) ->
-                                    OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text(t(en,bengali)) }
-                                }
-                                Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
+
+Button(
+    enabled = !busy,
+    onClick = {
+        rows = JSONArray()
+        page = "AddMoney"
+    },
+    modifier = Modifier.fillMaxWidth()
+) {
+    Text(t("Add Money", "অর্থ যোগ করুন"))
+}
+
+OutlinedButton(
+    enabled = !busy,
+    onClick = { loadPaymentMethods() },
+    modifier = Modifier.fillMaxWidth()
+) {
+    Text("BOTIM MONEY")
+}
+
+Button(
+    enabled = !busy,
+    onClick = {
+        rows = JSONArray()
+        call({ api.request("beneficiaries") }) {
+            rows = JSONArray(it)
+            page = "SendMoney"
+        }
+    },
+    modifier = Modifier.fillMaxWidth()
+) {
+    Text(t("Send Money", "অর্থ পাঠান"))
+}
+
+Button(enabled = !busy, onClick = { loadPaymentMethods() }, modifier = Modifier.fillMaxWidth()) { Text(t("Payment Methods", "পেমেন্ট পদ্ধতি")) }
                                 Button(enabled = !busy, onClick = { call({ api.request("beneficiaries") }) { rows = JSONArray(it); page = "Beneficiaries" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Beneficiaries", "প্রাপক")) }
-                                Button(enabled = !busy, onClick = { call({ api.request("transactions") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
+                                Button(enabled = !busy, onClick = { rows = JSONArray(); call({ api.request("deposit-requests") }) { rows = JSONArray(it); page = "History" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Transactions", "লেনদেন")) }
                                 Button(enabled = !busy, onClick = { call({ api.request("support") }) { rows = JSONArray(it); page = "Support" } }, modifier = Modifier.fillMaxWidth()) { Text(t("Support", "সহায়তা")) }
                                 Text(t("Identity verification is not available. Do not submit identity documents.", "পরিচয় যাচাই চালু হয়নি। পরিচয়পত্র জমা দেবেন না।"))
                             }
-                            "PaymentMethods" -> {
+
+"AddMoney" -> {
+    Text(t("Add Money", "অর্থ যোগ করুন"),
+        style = MaterialTheme.typography.titleLarge)
+
+    Text(t("Staging only. Do not transfer real money.",
+        "শুধু স্টেজিং। প্রকৃত টাকা পাঠাবেন না।"))
+
+    Text(t("Select payment method", "পেমেন্ট পদ্ধতি নির্বাচন করুন"))
+
+    listOf(
+        "botim_money" to "BOTIM Money",
+        "e_money" to "e& money",
+        "adcb" to "ADCB Bank",
+        "emirates_nbd" to "Emirates NBD",
+        "adib" to "ADIB Bank"
+    ).forEach { (id,label) ->
+        Row {
+            RadioButton(
+                selected = selectedMethod == id,
+                enabled = !busy,
+                onClick = { selectedMethod = id }
+            )
+            Text(label, modifier = Modifier.padding(top=12.dp))
+        }
+    }
+
+    Field(requestAmount,
+        { requestAmount = it.take(12) },
+        t("Amount (AED)", "পরিমাণ (AED)"))
+
+    val amount = requestAmount.toDoubleOrNull()
+
+    Button(
+        enabled = !busy &&
+            selectedMethod.isNotBlank() &&
+            amount != null &&
+            amount in 0.01..100000.0,
+        onClick = {
+            val payload = JSONObject()
+                .put("amountAed", amount)
+                .put("paymentMethodId", selectedMethod)
+                .put("receiptFixtureKey", "synthetic:" + requestKey)
+                .put("idempotencyKey", "deposit-" + requestKey)
+
+            call({ api.request("deposit-requests","POST",payload) }) {
+                requestAmount = ""
+                selectedMethod = ""
+                requestKey = java.util.UUID.randomUUID().toString()
+                rows = JSONArray()
+                page = "History"
+                notice = t("Staging request submitted.",
+                    "স্টেজিং রিকোয়েস্ট জমা হয়েছে।")
+                call({ api.request("deposit-requests") }) { rows = JSONArray(it) }
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(t("Submit Request", "রিকোয়েস্ট জমা দিন"))
+    }
+}
+
+"SendMoney" -> {
+    Text(t("Send Money", "অর্থ পাঠান"),
+        style = MaterialTheme.typography.titleLarge)
+
+    Text(t("Staging only. No real funds transferred.",
+        "শুধু স্টেজিং। প্রকৃত টাকা পাঠানো হবে না।"))
+
+    Text(t("Select beneficiary", "প্রাপক নির্বাচন করুন"))
+
+    if(rows.length()==0)
+        Text(t("No beneficiaries available.",
+            "কোনো প্রাপক পাওয়া যায়নি।"))
+
+    for(i in 0 until rows.length()) {
+        val row = rows.getJSONObject(i)
+        val id = row.optString("id")
+
+        Row {
+            RadioButton(
+                selected = selectedBeneficiary == id,
+                enabled = !busy && id.isNotBlank(),
+                onClick = { selectedBeneficiary = id }
+            )
+
+            Column(Modifier.padding(top=8.dp)) {
+                Text(row.optString("name"))
+                Text(row.optString("provider"))
+            }
+        }
+    }
+
+    Field(requestAmount,
+        { requestAmount = it.take(12) },
+        t("Amount (AED)", "পরিমাণ (AED)"))
+
+    val amount = requestAmount.toDoubleOrNull()
+
+    Button(
+        enabled = !busy &&
+            selectedBeneficiary.isNotBlank() &&
+            amount != null &&
+            amount in 0.01..100000.0 &&
+            (0 until rows.length()).any {
+                rows.getJSONObject(it).optString("id") ==
+                    selectedBeneficiary
+            },
+        onClick = {
+            val payload = JSONObject()
+                .put("amountAed", amount)
+                .put("beneficiaryId", selectedBeneficiary)
+                .put("idempotencyKey",
+                    "synthetic:" + requestKey)
+
+            call({
+                api.request("send-money-requests","POST",payload)
+            }) {
+                requestAmount = ""
+                selectedBeneficiary = ""
+                requestKey = java.util.UUID.randomUUID().toString()
+                rows = JSONArray()
+                page = "History"
+                notice = t("Staging request submitted.",
+                    "স্টেজিং রিকোয়েস্ট জমা হয়েছে।")
+                call({ api.request("send-money-requests") }) { rows = JSONArray(it) }
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(t("Submit Request", "রিকোয়েস্ট জমা দিন"))
+    }
+}
+"PaymentMethods" -> {
                                 Text(t("Payment Methods", "পেমেন্ট পদ্ধতি"), style = MaterialTheme.typography.titleLarge)
                                 Text(t("Service not yet available", "সেবাটি এখনও চালু হয়নি"))
                                 if (methodsLoaded && paymentMethods.isEmpty()) Text(t("No payment methods available.", "কোনো পেমেন্ট পদ্ধতি পাওয়া যায়নি।"))
@@ -232,11 +415,86 @@ result.mapCatching { done(it) }.onFailure { error ->
                                 }
                             }
                             "History" -> {
-                                Text(t("Transactions", "লেনদেন"), style = MaterialTheme.typography.titleLarge)
-                                if(rows.length()==0) Text(t("No transactions.", "কোনো লেনদেন নেই।"))
-                                for(i in 0 until rows.length()) Text(rows.getJSONObject(i).optString("id") + " • " + t("Under review / unavailable", "পর্যালোচনাধীন / অনুপলব্ধ"))
-                            }
-                            "Support" -> {
+    Text(t("Transaction History", "লেনদেনের ইতিহাস"),
+        style = MaterialTheme.typography.titleLarge)
+
+    Text(t("Test requests only. No real funds transferred.",
+        "শুধু পরীক্ষামূলক রিকোয়েস্ট। প্রকৃত টাকা পাঠানো হয়নি।"))
+
+    Button(
+        enabled = !busy,
+        onClick = {
+            rows = JSONArray()
+            call({ api.request("deposit-requests") }) {
+                rows = JSONArray(it)
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(t("Add Money History", "অর্থ যোগের ইতিহাস"))
+    }
+
+    Button(
+        enabled = !busy,
+        onClick = {
+            rows = JSONArray()
+            call({ api.request("send-money-requests") }) {
+                rows = JSONArray(it)
+            }
+        },
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Text(t("Send Money History", "অর্থ পাঠানোর ইতিহাস"))
+    }
+
+    if(rows.length()==0)
+        Text(t("No requests found.", "কোনো রিকোয়েস্ট নেই।"))
+
+    for(i in 0 until rows.length()) {
+        val row = rows.getJSONObject(i)
+        val status = row.optString("status")
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    if(row.has("beneficiary_id"))
+                        t("Send Money", "অর্থ পাঠানো")
+                    else
+                        t("Add Money", "অর্থ যোগ"),
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(row.optString("amount_aed", "—") + " AED")
+
+                Text(when(status) {
+                    "successful" -> t("Successful (Staging)", "সফল (স্টেজিং)")
+                    "rejected" -> t("Rejected", "প্রত্যাখ্যাত")
+                    "pending" -> t("Pending", "অপেক্ষমাণ")
+                    "under_review" -> t("Under review", "পর্যালোচনাধীন")
+                    "cancelled" -> t("Cancelled", "বাতিল")
+                    else -> t("Unavailable", "অনুপলব্ধ")
+                })
+
+                Text(t("Request ID", "রিকোয়েস্ট আইডি") +
+                    ": " + row.optString("id"))
+
+                if(status == "successful" &&
+                    row.has("transaction_reference") &&
+                    !row.isNull("transaction_reference")) {
+
+                    val trx = row.optString("transaction_reference")
+                    val clipboard = LocalClipboardManager.current
+                    Text("TRX ID: " + trx)
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(trx)) }) { Text("Copy TRX ID") }
+                }
+            }
+        }
+    }
+}
+"Support" -> {
                                 Text(t("Contact support", "সহায়তা নিন"), style = MaterialTheme.typography.titleLarge)
                                 Text(t("Do not include passwords, account numbers or identity documents.", "পাসওয়ার্ড, অ্যাকাউন্ট নম্বর বা পরিচয়পত্র দেবেন না।"))
                                 Field(subject, { subject=it }, t("Subject", "বিষয়"))

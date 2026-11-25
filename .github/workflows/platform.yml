@@ -4,7 +4,7 @@ on:
   pull_request:
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
   push:
-    branches: [feature/premium-upgrade]
+    branches: [feature/premium-upgrade, feature/premium-remittance-full-setup]
     paths: ['backend/**', 'admin/**', '.github/workflows/platform.yml']
 permissions:
   contents: read
